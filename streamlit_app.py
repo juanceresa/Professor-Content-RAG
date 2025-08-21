@@ -256,6 +256,61 @@ def update_conversation_context(question: str, search_results: Dict):
         elif any(q in ["application", "analysis"] for q in recent_questions):
             st.session_state.conversation_context["conversation_depth"] = "intermediate"
 
+def get_question_specific_formatting(question_type: str, prompt: str) -> str:
+    """Get specific formatting instructions based on question type and content"""
+    
+    formatting_strategies = {
+        "definition": """
+FORMAT AS CONCEPTUAL BREAKDOWN:
+- Use distinct category headers (e.g., "Politics as Power Allocation:", "Federalism as Shared Governance:")
+- Provide clear explanations under each category with concrete examples
+- Show concept progression: Foundation → Building Block → Application → Implication
+- End with thought map showing how concepts connect
+- NO bullet points - use paragraph structure with clear category divisions""",
+        
+        "application": """
+FORMAT AS PROCESS GUIDE:
+- Present step-by-step phases clearly labeled
+- Show decision frameworks: "Consider these factors:", "If X, then Y"
+- Provide real-world scenario walk-throughs
+- Use template structures students can follow
+- Include practical considerations at each step""",
+        
+        "analysis": """
+FORMAT AS MULTI-PERSPECTIVE EXAMINATION:
+- Present comparative frameworks (Perspective A vs Perspective B)
+- Show cause-and-effect chains with clear connections
+- Use "Looking at this through different lenses:" approach
+- Provide evidence for each viewpoint
+- Build analytical scaffolding step by step""",
+        
+        "clarification": """
+FORMAT AS LAYERED EXPLANATION:
+- Break complex ideas into digestible components
+- Use progression: Surface level → Deeper understanding → Broader implications
+- Show connections to previously discussed concepts
+- Include analogies and concrete examples
+- Build from familiar concepts to unfamiliar ones""",
+        
+        "synthesis": """
+FORMAT AS BUILDING BLOCK ASSEMBLY:
+- Present individual components first
+- Show how components combine and interact
+- Highlight trade-offs and considerations
+- Provide creative frameworks for integration
+- Encourage innovative connections between ideas""",
+        
+        "general": """
+FORMAT AS STRUCTURED EXPLORATION:
+- Use clear thematic organization
+- Provide substantial content with examples
+- Show relationships between ideas
+- Build cumulative understanding
+- Connect to course framework and prior learning"""
+    }
+    
+    return formatting_strategies.get(question_type, formatting_strategies["general"])
+
 def get_pedagogical_prompt_strategy(question_type: str, conversation_context: Dict) -> str:
     """Generate balanced teaching strategy that informs first, then encourages exploration"""
     depth = conversation_context["conversation_depth"]
@@ -319,7 +374,14 @@ def get_course_mapping():
             - For application questions, present scenarios and guide them through the reasoning process
             - For analysis questions, break complex topics into manageable components
             - Always reference course materials but encourage students to think critically about the content
-            - If you don't have specific information from the course materials, guide them to think about related concepts they do know"""
+            - If you don't have specific information from the course materials, guide them to think about related concepts they do know
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         },
         "american": {
             "name": "American Political System",
@@ -339,7 +401,14 @@ def get_course_mapping():
             - For application questions, present scenarios and guide them through the reasoning process
             - For analysis questions, break complex topics into manageable components
             - Always reference course materials but encourage students to think critically about the content
-            - If you don't have specific information from the course materials, guide them to think about related concepts they do know"""
+            - If you don't have specific information from the course materials, guide them to think about related concepts they do know
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         },
         "foundational": {
             "name": "Foundational Political Theory",
@@ -359,7 +428,14 @@ def get_course_mapping():
             - For theoretical questions, guide them to examine underlying assumptions and implications
             - For analysis questions, break complex topics into manageable components
             - Always reference course materials but encourage students to think critically about the content
-            - Connect classical theories to modern political phenomena where appropriate"""
+            - Connect classical theories to modern political phenomena where appropriate
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         },
         "functional": {
             "name": "Functional Political Analysis",
@@ -379,7 +455,14 @@ def get_course_mapping():
             - For analytical questions, guide them through the functional analysis process step by step
             - For application questions, present case studies and guide them through functional interpretation
             - Always reference course materials but encourage students to think analytically about political functions
-            - Help students see connections between different functional aspects of political systems"""
+            - Help students see connections between different functional aspects of political systems
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         },
         "international": {
             "name": "International Relations & Comparative Politics",
@@ -399,7 +482,14 @@ def get_course_mapping():
             - For comparative questions, guide them through systematic comparison methodologies
             - For theoretical questions, help them apply IR theories to contemporary global events
             - Always reference course materials but encourage students to think critically about international relations
-            - Help students see connections between domestic politics and international outcomes"""
+            - Help students see connections between domestic politics and international outcomes
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         },
         "professional": {
             "name": "Professional & Management Politics",
@@ -419,7 +509,14 @@ def get_course_mapping():
             - For management questions, guide them through decision-making processes step by step
             - For application questions, present professional scenarios and guide problem-solving
             - Always reference course materials but encourage students to think practically about political careers
-            - Help students connect academic theory to professional political practice"""
+            - Help students connect academic theory to professional political practice
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         },
         "theory": {
             "name": "Political Philosophy & Theory",
@@ -440,7 +537,14 @@ def get_course_mapping():
             - For theoretical questions, guide them to examine underlying assumptions and implications
             - For comparison questions, help them identify key similarities and differences through guided discovery
             - Always reference course materials but encourage students to think critically and philosophically
-            - Connect classical theories to contemporary political and ethical dilemmas where appropriate"""
+            - Connect classical theories to contemporary political and ethical dilemmas where appropriate
+            
+            FORMATTING FOR STUDENT COMPREHENSION:
+            - Use clear category headers to organize complex information hierarchically
+            - Create thought maps showing concept progressions with arrows (→) and connecting phrases
+            - Break dense material into digestible chunks with distinct thematic sections
+            - Show relationships between ideas through structural organization and connecting language
+            - Adapt formatting strategy based on question type (definition, application, analysis, etc.)"""
         }
     }
 
@@ -841,6 +945,9 @@ LESSON PROGRESSION CONTEXT:
                 except (ValueError, TypeError):
                     pass
         
+        # Get question-specific formatting approach
+        formatting_strategy = get_question_specific_formatting(question_type, prompt)
+        
         # Build pedagogical instruction based on conversation depth and question type
         pedagogical_instruction = f"""
 BALANCED TEACHING APPROACH FOR THIS RESPONSE:
@@ -849,6 +956,7 @@ BALANCED TEACHING APPROACH FOR THIS RESPONSE:
 - Student Engagement: {st.session_state.conversation_context['student_engagement_level']}
 - Current Lesson: {current_lesson}
 - Teaching Strategy: {teaching_strategy}
+- Formatting Approach: {formatting_strategy}
 {lesson_context}
 {repetition_guidance}
 
@@ -864,6 +972,43 @@ RESPONSE STRUCTURE (Follow this order):
    - Invite exploration of applications, implications, or connections
    - Use phrases like "What aspects interest you most?", "How do you think this applies to...?", "What connections do you see to...?"
 
+FORMATTING STRATEGIES BY QUESTION TYPE:
+
+1. DEFINITION/CONCEPTUAL QUESTIONS:
+   - Use distinct category headers (e.g., "Politics as Power Allocation:", "Politics as World Building:")
+   - Provide clear explanations under each category
+   - Include concrete examples within each section
+   - Show concept progression with arrows (→) and connecting phrases
+   - End with thought progression map showing how concepts build on each other
+
+2. APPLICATION QUESTIONS ("How do I..." / "How to..."):
+   - Use step-by-step process format with clear phases
+   - Show decision trees: "If this, then that" structures
+   - Provide framework templates that students can follow
+   - Include real-world scenario walk-throughs
+   - Use "Consider these factors:" approach
+
+3. ANALYSIS QUESTIONS ("Why..." / "Analyze..." / "Compare..."):
+   - Use comparative frameworks (Side A vs Side B)
+   - Present multiple perspectives with evidence for each
+   - Show cause-and-effect chains
+   - Use "Looking at this through different lenses:" approach
+   - Provide analytical scaffolding
+
+4. CLARIFICATION QUESTIONS ("Explain..." / "Elaborate..."):
+   - Break complex ideas into digestible components
+   - Use layered explanations (surface → deeper → implications)
+   - Show connections to previously discussed concepts
+   - Use analogies and concrete examples
+   - Build from familiar to unfamiliar concepts
+
+5. SYNTHESIS QUESTIONS ("Create..." / "Design..." / "Integrate..."):
+   - Present building blocks and show how they combine
+   - Use design thinking approaches
+   - Show trade-offs and considerations
+   - Provide creative frameworks
+   - Encourage innovative connections
+
 TEACHING GUIDELINES:
 1. INFORM FIRST: Give students substantive content they can digest and learn from
 2. Reference specific course materials, lessons, and examples
@@ -872,6 +1017,30 @@ TEACHING GUIDELINES:
 5. Provide enough detail for thorough understanding
 6. End with strategic questioning to encourage further exploration
 7. Avoid excessive questioning - one good follow-up question is sufficient
+
+ADVANCED FORMATTING TECHNIQUES:
+1. CONCEPT FLOW VISUALIZATION:
+   - Use "🔄" for cyclic processes
+   - Use "⚖️" for balanced/opposing concepts
+   - Use "📈" for progressive/escalating ideas
+   - Use "🎯" for focused outcomes or goals
+   
+2. THOUGHT PROGRESSION MAPS:
+   - Foundation Concept → Building Block → Application → Implication
+   - Problem Identification → Analysis → Solutions → Evaluation
+   - Historical Context → Current State → Future Trends
+   
+3. RELATIONSHIP INDICATORS:
+   - "This builds on..." (cumulative learning)
+   - "In contrast to..." (comparative analysis)
+   - "Because of this..." (causal relationships)
+   - "This connects to..." (interdisciplinary links)
+   
+4. LEARNING SCAFFOLDS:
+   - Start with familiar concepts
+   - Introduce one new element at a time
+   - Show how new concepts relate to known ones
+   - Provide bridges between abstract and concrete
 
 CONVERSATION CONTINUITY:
 - Connect new information to previous discussions naturally
