@@ -132,8 +132,33 @@ class DocumentProcessor:
             logger.warning(f"Unsupported file format: {suffix}")
             return ""
 
-    def extract_hierarchical_structure(self, text: str) -> List[Dict]:
-        """Extract hierarchical bullet structure from academic content"""
+    def extract_lesson_structure(self, text: str, doc_type: str) -> Dict:
+        """Extract lessons with 100% confidence in MASTER files"""
+        import re
+        lessons = {}
+        
+        if doc_type == "master_lecture":
+            lines = text.split('\n')
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                
+                # Lesson headers: "Lesson X" with no bullet point
+                lesson_match = re.match(r'^Lesson\s+(\d+)(?:\s|$)', stripped, re.IGNORECASE)
+                if lesson_match and not any(stripped.startswith(bullet) for bullet in ['•', '○', '■', '▪', '-', '*']):
+                    lesson_number = lesson_match.group(1)
+                    lessons[lesson_number] = {
+                        'lesson_number': lesson_number,
+                        'content_start_line': i,
+                        'title': stripped,
+                        'raw_line': line
+                    }
+                    logger.info(f"Found lesson {lesson_number}: {stripped}")
+        
+        return lessons
+
+    def extract_hierarchical_structure(self, text: str, doc_type: str = "general") -> List[Dict]:
+        """Extract hierarchical bullet structure from academic content with enhanced lesson detection"""
+        import re
         lines = text.split('\n')
         structured_content = []
         current_lesson = None
@@ -154,11 +179,34 @@ class DocumentProcessor:
             if not stripped_line:
                 continue
 
-            # Detect lesson headers
-            if 'lesson' in stripped_line.lower() and any(word in stripped_line.lower() for word in ['lesson', 'chapter', 'module']):
-                current_lesson = stripped_line
-                hierarchy_stack = [current_lesson]
-                continue
+            # Enhanced lesson detection for MASTER lecture files
+            is_lesson_header = False
+            if doc_type == "master_lecture":
+                # Look for "Lesson X" pattern with no bullet points
+                lesson_match = re.match(r'^Lesson\s+(\d+)(?:\s|$)', stripped_line, re.IGNORECASE)
+                if lesson_match and not any(stripped_line.startswith(bullet) for bullet in ['•', '○', '■', '▪', '-', '*']):
+                    current_lesson = stripped_line
+                    hierarchy_stack = [current_lesson]
+                    is_lesson_header = True
+                    
+                    # Add lesson header as a structured item
+                    structured_content.append({
+                        'content': stripped_line,
+                        'level': 0,  # Lesson level
+                        'symbol': None,
+                        'hierarchy_path': current_lesson,
+                        'lesson': current_lesson,
+                        'full_line': line,
+                        'is_lesson_header': True
+                    })
+                    continue
+            else:
+                # General lesson detection for other documents
+                if 'lesson' in stripped_line.lower() and any(word in stripped_line.lower() for word in ['lesson', 'chapter', 'module']):
+                    current_lesson = stripped_line
+                    hierarchy_stack = [current_lesson]
+                    is_lesson_header = True
+                    continue
 
             # Detect bullet points and their hierarchy level
             bullet_level = 0
@@ -213,66 +261,164 @@ class DocumentProcessor:
 
         return structured_content
 
-    def hierarchical_chunking(self, structured_content: List[Dict], target_size: int = 900, overlap_size: int = 150) -> List[str]:
-        """Create chunks that preserve hierarchical structure and semantic meaning"""
+    def hierarchical_chunking(self, structured_content: List[Dict], doc_type: str = "general", target_size: int = 900, overlap_size: int = 150) -> List[str]:
+        """Create chunks that preserve hierarchical structure and conceptual flow"""
         if not structured_content:
             return []
 
+        if doc_type == "master_lecture":
+            return self._create_lesson_based_chunks(structured_content, target_size)
+        else:
+            return self._create_topic_based_chunks(structured_content, target_size)
+
+    def _create_lesson_based_chunks(self, content: List[Dict], target_size: int = 900) -> List[str]:
+        """Chunk MASTER PDFs with lesson boundaries as primary breaks"""
         chunks = []
-        current_chunk_items = []
-        current_chunk_size = 0
-
-        for i, item in enumerate(structured_content):
-            item_text = item['full_line']
-            item_size = len(item_text)
-
-            # Check if adding this item would exceed target size
-            if current_chunk_size + item_size > target_size and current_chunk_items:
-                # Create chunk from current items
-                chunk_text = self._create_chunk_with_context(current_chunk_items)
-                chunks.append(chunk_text)
-
-                # Start new chunk with overlap
-                overlap_items = self._get_overlap_items(current_chunk_items, overlap_size)
-                current_chunk_items = overlap_items + [item]
-                current_chunk_size = sum(len(it['full_line']) for it in current_chunk_items)
-            else:
-                current_chunk_items.append(item)
-                current_chunk_size += item_size
-
-            # Force chunk break at lesson boundaries
-            if (i < len(structured_content) - 1 and
-                item.get('lesson') != structured_content[i + 1].get('lesson') and
-                current_chunk_items):
-                chunk_text = self._create_chunk_with_context(current_chunk_items)
-                chunks.append(chunk_text)
-                current_chunk_items = []
-                current_chunk_size = 0
-
-        # Add final chunk
-        if current_chunk_items:
-            chunk_text = self._create_chunk_with_context(current_chunk_items)
-            chunks.append(chunk_text)
-
+        current_lesson_content = []
+        current_lesson = None
+        
+        for item in content:
+            # Hard boundary at lesson changes
+            if item.get('lesson') != current_lesson and current_lesson_content:
+                # Process the completed lesson
+                lesson_chunks = self._chunk_within_lesson(current_lesson_content, target_size)
+                chunks.extend(lesson_chunks)
+                current_lesson_content = []
+            
+            current_lesson = item.get('lesson')
+            current_lesson_content.append(item)
+        
+        # Process final lesson
+        if current_lesson_content:
+            lesson_chunks = self._chunk_within_lesson(current_lesson_content, target_size)
+            chunks.extend(lesson_chunks)
+        
         return chunks
 
-    def _create_chunk_with_context(self, items: List[Dict]) -> str:
-        """Create a chunk with proper hierarchical context"""
+    def _chunk_within_lesson(self, lesson_content: List[Dict], target_size: int = 900) -> List[str]:
+        """Chunk within a lesson, respecting bullet hierarchy"""
+        chunks = []
+        current_chunk_items = []
+        current_size = 0
+        
+        i = 0
+        while i < len(lesson_content):
+            item = lesson_content[i]
+            
+            # Get the complete bullet tree starting from this item
+            bullet_tree = self._extract_complete_bullet_tree(lesson_content, i)
+            tree_size = sum(len(item['full_line']) for item in bullet_tree)
+            
+            # If adding this tree exceeds size AND we have content, create chunk
+            if current_size + tree_size > target_size and current_chunk_items:
+                chunk = self._assemble_chunk_with_context(current_chunk_items)
+                chunks.append(chunk)
+                current_chunk_items = []
+                current_size = 0
+            
+            # Add the complete bullet tree
+            current_chunk_items.extend(bullet_tree)
+            current_size += tree_size
+            
+            # Skip ahead past the tree items we just processed
+            i += len(bullet_tree)
+        
+        # Final chunk
+        if current_chunk_items:
+            chunk = self._assemble_chunk_with_context(current_chunk_items)
+            chunks.append(chunk)
+        
+        return chunks
+
+    def _extract_complete_bullet_tree(self, content: List[Dict], start_idx: int) -> List[Dict]:
+        """Extract a complete bullet tree to avoid breaking conceptual flow"""
+        if start_idx >= len(content):
+            return []
+        
+        tree = [content[start_idx]]
+        start_item = content[start_idx]
+        start_level = start_item.get('level', 0)
+        
+        # If this is a lesson header, just return it
+        if start_item.get('is_lesson_header'):
+            return tree
+        
+        # If this is a main bullet (•), include all its sub-bullets
+        if start_level == 1:  # Main bullet
+            i = start_idx + 1
+            while i < len(content):
+                item = content[i]
+                item_level = item.get('level', 0)
+                
+                # Stop when we hit another main bullet, lesson header, or lesson boundary
+                if ((item_level <= 1 and i > start_idx) or 
+                    item.get('is_lesson_header') or
+                    item.get('lesson') != start_item.get('lesson')):
+                    break
+                
+                tree.append(item)
+                i += 1
+        
+        return tree
+
+    def _create_topic_based_chunks(self, content: List[Dict], target_size: int = 900) -> List[str]:
+        """Create topic-based chunks for reading materials"""
+        # Similar to lesson-based but without lesson boundaries
+        chunks = []
+        current_chunk_items = []
+        current_size = 0
+        
+        i = 0
+        while i < len(content):
+            item = content[i]
+            
+            # Get bullet tree for main bullets, single item for others
+            if item.get('level') == 1:  # Main bullet
+                bullet_tree = self._extract_complete_bullet_tree(content, i)
+            else:
+                bullet_tree = [item]
+            
+            tree_size = sum(len(item['full_line']) for item in bullet_tree)
+            
+            # Check size constraints
+            if current_size + tree_size > target_size and current_chunk_items:
+                chunk = self._assemble_chunk_with_context(current_chunk_items)
+                chunks.append(chunk)
+                current_chunk_items = []
+                current_size = 0
+            
+            current_chunk_items.extend(bullet_tree)
+            current_size += tree_size
+            i += len(bullet_tree)
+        
+        # Final chunk
+        if current_chunk_items:
+            chunk = self._assemble_chunk_with_context(current_chunk_items)
+            chunks.append(chunk)
+        
+        return chunks
+
+    def _assemble_chunk_with_context(self, items: List[Dict]) -> str:
+        """Assemble chunk with proper hierarchical context and lesson information"""
         if not items:
             return ""
-
-        # Add lesson context at the top
-        lesson = items[0].get('lesson')
+        
         chunk_lines = []
-
-        if lesson:
+        
+        # Add lesson header if present
+        lesson = items[0].get('lesson')
+        if lesson and not items[0].get('is_lesson_header'):
             chunk_lines.append(f"=== {lesson} ===\n")
-
-        # Group items by hierarchy level for better formatting
+        
+        # Add items preserving original formatting and indentation
         for item in items:
             chunk_lines.append(item['full_line'])
-
+        
         return '\n'.join(chunk_lines)
+
+    def _create_chunk_with_context(self, items: List[Dict]) -> str:
+        """Legacy method - redirects to new assembly method"""
+        return self._assemble_chunk_with_context(items)
 
     def _get_overlap_items(self, items: List[Dict], overlap_size: int) -> List[Dict]:
         """Get items for overlap, prioritizing higher-level hierarchy items"""
@@ -294,16 +440,16 @@ class DocumentProcessor:
 
         return overlap_items
 
-    def intelligent_chunking(self, text: str, max_chunk_size: int = 900, overlap: int = 150) -> List[str]:
+    def intelligent_chunking(self, text: str, doc_type: str = "general", max_chunk_size: int = 900, overlap: int = 150) -> List[str]:
         """Enhanced chunking that preserves hierarchical academic structure"""
         if not text.strip():
             return []
 
         # First, try hierarchical chunking for structured content
-        structured_content = self.extract_hierarchical_structure(text)
+        structured_content = self.extract_hierarchical_structure(text, doc_type)
 
         if len(structured_content) > 3:  # If we found good hierarchical structure
-            return self.hierarchical_chunking(structured_content, max_chunk_size, overlap)
+            return self.hierarchical_chunking(structured_content, doc_type, target_size=max_chunk_size, overlap_size=overlap)
 
         # Fallback to paragraph-based chunking for unstructured content
         paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
@@ -336,17 +482,37 @@ class DocumentProcessor:
         return chunks
 
     def infer_document_type(self, file_path: Path) -> str:
-        """Infer document type from filename and content"""
-        filename = file_path.name.lower()
-
-        if 'syllabus' in filename:
+        """Enhanced document classification with lesson detection priority"""
+        filename = file_path.name
+        
+        # MASTER lecture PDFs - highest priority for lesson extraction
+        if (filename.startswith("MASTER") and 
+            "Lecture" in filename and 
+            filename.endswith(".pdf")):
+            return "master_lecture"
+        
+        # MASTER reading PDFs - reading materials in PDF format
+        elif (filename.startswith("MASTER") and 
+              "Read" in filename and 
+              filename.endswith(".pdf")):
+            return "reading_material"
+        
+        # Reading materials - support content without lesson structure
+        elif file_path.suffix.lower() in ['.docx', '.doc']:
+            return "reading_material"
+        
+        # Legacy classification for other files
+        filename_lower = filename.lower()
+        if 'syllabus' in filename_lower:
             return 'syllabus'
-        elif 'lecture' in filename or 'slides' in filename:
+        elif 'lecture' in filename_lower or 'slides' in filename_lower:
             return 'lecture'
-        elif 'reading' in filename or 'assignment' in filename:
-            return 'reading'
-        elif 'exam' in filename or 'quiz' in filename:
+        elif 'reading' in filename_lower or 'assignment' in filename_lower:
+            return 'reading_material'
+        elif 'exam' in filename_lower or 'quiz' in filename_lower:
             return 'assessment'
+        elif filename.endswith(".pdf"):
+            return "supplementary_pdf"
         else:
             return 'general'
 
@@ -360,8 +526,11 @@ class DocumentProcessor:
             logger.warning(f"No text extracted from {file_path}")
             return []
 
-        # Create chunks using hierarchical chunking
-        chunks = self.intelligent_chunking(text)
+        # Get document type for enhanced processing
+        doc_type = self.infer_document_type(file_path)
+        
+        # Create chunks using hierarchical chunking with document type awareness
+        chunks = self.intelligent_chunking(text, doc_type)
         logger.info(f"Created {len(chunks)} chunks from {file_path}")
 
         # Create DocumentChunk objects with enhanced metadata
@@ -387,24 +556,28 @@ class DocumentProcessor:
                 # Fallback: create namespace from course name
                 namespace = course_name.lower().replace(" ", "_").replace("-", "_")
 
+            # Enhanced hierarchy extraction with document type awareness
+            hierarchy_info = self._extract_chunk_hierarchy(chunk_text, doc_type, file_path)
+
             metadata = {
                 'course': namespace,  # Use namespace for consistency with search filter
                 'course_name': course_name,  # Keep original course name for display
                 'professor': professor_name,
                 'document_name': file_path.name,
-                'document_type': self.infer_document_type(file_path),
+                'document_type': doc_type,
                 'chunk_index': i,
                 'total_chunks': len(chunks),
                 'file_path': str(file_path),
                 'processed_date': datetime.now().isoformat(),
                 'text': chunk_text,  # Store text in metadata for Pinecone
 
-                # Hierarchical metadata (ensure no null values)
+                # Enhanced hierarchical metadata (ensure no null values)
                 'lesson_number': hierarchy_info.get('lesson_number') or "",
                 'main_topic': hierarchy_info.get('main_topic') or "",
                 'hierarchy_path': hierarchy_info.get('hierarchy_path') or "General Content",
                 'depth_level': hierarchy_info.get('depth_level', 0),
-                'chunk_type': hierarchy_info.get('chunk_type', 'general')
+                'chunk_type': hierarchy_info.get('chunk_type', 'general'),
+                'conceptual_completeness': hierarchy_info.get('conceptual_completeness', 'complete')
             }
 
             document_chunks.append(DocumentChunk(
@@ -415,26 +588,45 @@ class DocumentProcessor:
 
         return document_chunks
 
-    def _extract_chunk_hierarchy(self, chunk_text: str) -> Dict:
-        """Extract hierarchical information from a chunk"""
+    def _extract_chunk_hierarchy(self, chunk_text: str, doc_type: str = "general", file_path: Path = None) -> Dict:
+        """Extract enhanced hierarchical information from a chunk with document type awareness"""
+        import re
         lines = chunk_text.split('\n')
         hierarchy_info = {
             'lesson_number': None,
             'main_topic': None,
             'hierarchy_path': None,
             'depth_level': 0,
-            'chunk_type': 'general'
+            'chunk_type': 'general',
+            'conceptual_completeness': 'complete'
         }
 
+        # Enhanced lesson detection based on document type
         for line in lines:
             stripped_line = line.strip()
 
-            # Extract lesson number
-            if 'lesson' in stripped_line.lower():
-                import re
-                lesson_match = re.search(r'lesson\s+(\d+)', stripped_line.lower())
-                if lesson_match:
-                    hierarchy_info['lesson_number'] = lesson_match.group(1)
+            # Enhanced lesson number extraction
+            if not hierarchy_info['lesson_number']:
+                # Look for lesson markers (=== Lesson X ===)
+                lesson_marker_match = re.search(r'=== (Lesson \d+) ===', stripped_line)
+                if lesson_marker_match:
+                    lesson_num_match = re.search(r'Lesson (\d+)', lesson_marker_match.group(1))
+                    if lesson_num_match:
+                        hierarchy_info['lesson_number'] = lesson_num_match.group(1)
+                        continue
+
+                # Look for direct lesson headers
+                elif doc_type == "master_lecture":
+                    lesson_match = re.match(r'^Lesson\s+(\d+)(?:\s|$)', stripped_line, re.IGNORECASE)
+                    if lesson_match and not any(stripped_line.startswith(bullet) for bullet in ['•', '○', '■', '▪', '-', '*']):
+                        hierarchy_info['lesson_number'] = lesson_match.group(1)
+                        continue
+
+                # General lesson detection for other documents
+                elif 'lesson' in stripped_line.lower():
+                    lesson_match = re.search(r'lesson\s+(\d+)', stripped_line.lower())
+                    if lesson_match:
+                        hierarchy_info['lesson_number'] = lesson_match.group(1)
 
             # Detect main topic (usually the first major bullet point)
             if stripped_line.startswith('•') and not hierarchy_info['main_topic']:
@@ -457,7 +649,7 @@ class DocumentProcessor:
         elif hierarchy_info['depth_level'] > 0:
             hierarchy_info['chunk_type'] = 'structured_content'
 
-        # Create hierarchy path
+        # Enhanced hierarchy path building
         path_components = []
         if hierarchy_info['lesson_number']:
             path_components.append(f"Lesson {hierarchy_info['lesson_number']}")
@@ -465,6 +657,22 @@ class DocumentProcessor:
             path_components.append(hierarchy_info['main_topic'][:50])  # Truncate if too long
 
         hierarchy_info['hierarchy_path'] = " > ".join(path_components) if path_components else "General Content"
+
+        # Determine conceptual completeness based on chunk structure
+        if hierarchy_info['main_topic'] and hierarchy_info['depth_level'] > 1:
+            hierarchy_info['conceptual_completeness'] = 'complete'
+        elif hierarchy_info['main_topic']:
+            hierarchy_info['conceptual_completeness'] = 'partial'
+        else:
+            hierarchy_info['conceptual_completeness'] = 'fragment'
+
+        # Set chunk type based on document type and content
+        if doc_type == "master_lecture" and hierarchy_info['lesson_number']:
+            hierarchy_info['chunk_type'] = 'lesson_content'
+        elif doc_type == "reading_material":
+            hierarchy_info['chunk_type'] = 'reading_content'
+        elif hierarchy_info['depth_level'] > 0:
+            hierarchy_info['chunk_type'] = 'structured_content'
 
         return hierarchy_info
 
