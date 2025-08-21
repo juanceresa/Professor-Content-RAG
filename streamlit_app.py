@@ -62,44 +62,44 @@ COURSES = {}
 def analyze_student_engagement(response: str) -> str:
     """Analyze student response to determine engagement level"""
     response_lower = response.lower().strip()
-    
+
     # Disengaged signals
     if response_lower in ["i don't know", "idk", "not sure", "no idea", "i'm confused", "what?"]:
         return "disengaged"
-    
+
     # Minimal responses
     if len(response.split()) <= 3 and response_lower in ["yes", "no", "ok", "sure", "maybe", "i guess"]:
         return "minimal"
-    
+
     # Engaged signals
     if any(phrase in response_lower for phrase in [
-        "how does", "what about", "can you explain", "that's interesting", 
+        "how does", "what about", "can you explain", "that's interesting",
         "i think", "my understanding", "follow up", "another question"
     ]):
         return "engaged"
-    
+
     # Moderate length responses
     if len(response.split()) > 10:
         return "engaged"
     elif len(response.split()) > 5:
         return "neutral"
-    
+
     return "neutral"
 
 def detect_content_repetition(topic: str, concept: str) -> bool:
     """Check if we've covered this concept too many times recently"""
     context = st.session_state.conversation_context
-    
+
     # Check if this specific concept has been repeated
     if concept in context["concept_repetition_count"]:
         if context["concept_repetition_count"][concept] >= 2:
             return True
-    
+
     # Check if we're stuck on the same topic
     recent_topics = context["topics_discussed"][-3:]
     if recent_topics.count(topic) >= 2:
         return True
-    
+
     return False
 
 def get_available_lessons_for_course(pinecone_index, course_namespace: str) -> list:
@@ -113,19 +113,19 @@ def get_available_lessons_for_course(pinecone_index, course_namespace: str) -> l
             namespace=course_namespace,
             filter={"course": course_namespace}
         )
-        
+
         # Extract unique lesson numbers
         lessons = set()
         for match in sample_results.matches:
             lesson_num = match.metadata.get('lesson_number', '')
             if lesson_num and lesson_num.isdigit():
                 lessons.add(int(lesson_num))
-        
+
         # Return sorted list of available lessons
         sorted_lessons = sorted(list(lessons))
         logger.info(f"Found lessons {sorted_lessons} for course {course_namespace}")
         return sorted_lessons
-        
+
     except Exception as e:
         logger.error(f"Error getting available lessons: {e}")
         return []
@@ -135,13 +135,13 @@ def get_alternative_content_from_embeddings(current_concept: str, current_chunks
     try:
         if not current_chunks:
             return []
-        
+
         # Get the embedding for the current concept
         concept_embedding = services["embedding_model"].encode([current_concept])[0].tolist()
-        
+
         # Get course namespace
         namespace = COURSES[course_key]["namespace"]
-        
+
         # Search for related but different content
         related_results = services["pinecone"].query(
             vector=concept_embedding,
@@ -150,11 +150,11 @@ def get_alternative_content_from_embeddings(current_concept: str, current_chunks
             namespace=namespace,
             filter={"course": namespace}
         )
-        
+
         # Filter out chunks we've already used and extract diverse examples
         current_chunk_ids = {chunk.get('id', '') for chunk in current_chunks}
         alternative_chunks = []
-        
+
         for match in related_results.matches:
             chunk_id = match.get('id', '')
             if chunk_id not in current_chunk_ids and match.score > 0.5:  # Related but different
@@ -166,10 +166,10 @@ def get_alternative_content_from_embeddings(current_concept: str, current_chunks
                     "score": match.score
                 }
                 alternative_chunks.append(chunk_info)
-        
+
         # Return diverse alternative content
         return alternative_chunks[:5]  # Top 5 alternative chunks
-        
+
     except Exception as e:
         logger.error(f"Error getting alternative content from embeddings: {e}")
         return []
@@ -177,62 +177,62 @@ def get_alternative_content_from_embeddings(current_concept: str, current_chunks
 def analyze_question_type(question: str) -> str:
     """Analyze the type of question to determine teaching approach"""
     question_lower = question.lower()
-    
+
     # Definition/concept questions
     if any(word in question_lower for word in ["what is", "define", "meaning of", "definition"]):
         return "definition"
-    
+
     # Application questions (check specific "analyze" patterns first)
     elif any(phrase in question_lower for phrase in ["how do i analyze", "how to analyze"]):
         return "application"
-    
+
     # Application questions (general)
     elif any(word in question_lower for word in ["how to", "apply", "use", "implement", "example"]):
         return "application"
-    
+
     # Analysis questions (general "analyze" and other analysis terms)
     elif any(word in question_lower for word in ["analyze", "why", "compare", "contrast", "evaluate"]):
         return "analysis"
-    
+
     # Synthesis questions
     elif any(word in question_lower for word in ["create", "design", "combine", "integrate"]):
         return "synthesis"
-    
+
     # Clarification questions
     elif any(word in question_lower for word in ["explain", "clarify", "elaborate"]):
         return "clarification"
-    
+
     return "general"
 
 def update_conversation_context(question: str, search_results: Dict):
     """Update conversation context based on current interaction"""
     import time
-    
+
     # Initialize session start time if not set
     if st.session_state.conversation_context["session_start_time"] is None:
         st.session_state.conversation_context["session_start_time"] = time.time()
-    
+
     # Analyze student engagement if this is a follow-up (check if there are previous messages)
     if len(st.session_state.messages) > 0:
         engagement = analyze_student_engagement(question)
         st.session_state.conversation_context["student_engagement_level"] = engagement
-        
+
         # Track consecutive minimal responses
         if engagement in ["disengaged", "minimal"]:
             st.session_state.conversation_context["consecutive_minimal_responses"] += 1
         else:
             st.session_state.conversation_context["consecutive_minimal_responses"] = 0
-    
+
     # Analyze and store question type
     question_type = analyze_question_type(question)
     st.session_state.conversation_context["question_types"].append(question_type)
-    
+
     # Extract topics from search results and track concept repetition
     if search_results.get("chunks"):
         for chunk in search_results["chunks"]:
             topic = chunk.get("hierarchy_path", "")
             lesson = chunk.get("lesson", "")
-            
+
             if topic:
                 # Track concept repetition
                 concept_key = topic.lower()
@@ -240,14 +240,14 @@ def update_conversation_context(question: str, search_results: Dict):
                     st.session_state.conversation_context["concept_repetition_count"][concept_key] += 1
                 else:
                     st.session_state.conversation_context["concept_repetition_count"][concept_key] = 1
-                
+
                 # Add to topics discussed if not already there
                 if topic not in st.session_state.conversation_context["topics_discussed"]:
                     st.session_state.conversation_context["topics_discussed"].append(topic)
-            
+
             if lesson:
                 st.session_state.conversation_context["last_topic"] = f"Lesson {lesson}: {topic}"
-    
+
     # Adjust conversation depth based on question types
     recent_questions = st.session_state.conversation_context["question_types"][-3:]
     if len(recent_questions) >= 2:
@@ -258,7 +258,7 @@ def update_conversation_context(question: str, search_results: Dict):
 
 def get_question_specific_formatting(question_type: str, prompt: str) -> str:
     """Get specific formatting instructions based on question type and content"""
-    
+
     formatting_strategies = {
         "definition": """
 FORMAT AS CONCEPTUAL BREAKDOWN:
@@ -266,8 +266,8 @@ FORMAT AS CONCEPTUAL BREAKDOWN:
 - Provide clear explanations under each category with concrete examples
 - Show concept progression: Foundation → Building Block → Application → Implication
 - End with thought map showing how concepts connect
-- NO bullet points - use paragraph structure with clear category divisions""",
-        
+- NO bullet points - use paragraph structure with clear category divisions. Make sure that the category devisions are in bold""",
+
         "application": """
 FORMAT AS PROCESS GUIDE:
 - Present step-by-step phases clearly labeled
@@ -275,7 +275,7 @@ FORMAT AS PROCESS GUIDE:
 - Provide real-world scenario walk-throughs
 - Use template structures students can follow
 - Include practical considerations at each step""",
-        
+
         "analysis": """
 FORMAT AS MULTI-PERSPECTIVE EXAMINATION:
 - Present comparative frameworks (Perspective A vs Perspective B)
@@ -283,7 +283,7 @@ FORMAT AS MULTI-PERSPECTIVE EXAMINATION:
 - Use "Looking at this through different lenses:" approach
 - Provide evidence for each viewpoint
 - Build analytical scaffolding step by step""",
-        
+
         "clarification": """
 FORMAT AS LAYERED EXPLANATION:
 - Break complex ideas into digestible components
@@ -291,7 +291,7 @@ FORMAT AS LAYERED EXPLANATION:
 - Show connections to previously discussed concepts
 - Include analogies and concrete examples
 - Build from familiar concepts to unfamiliar ones""",
-        
+
         "synthesis": """
 FORMAT AS BUILDING BLOCK ASSEMBLY:
 - Present individual components first
@@ -299,7 +299,7 @@ FORMAT AS BUILDING BLOCK ASSEMBLY:
 - Highlight trade-offs and considerations
 - Provide creative frameworks for integration
 - Encourage innovative connections between ideas""",
-        
+
         "general": """
 FORMAT AS STRUCTURED EXPLORATION:
 - Use clear thematic organization
@@ -308,7 +308,7 @@ FORMAT AS STRUCTURED EXPLORATION:
 - Build cumulative understanding
 - Connect to course framework and prior learning"""
     }
-    
+
     return formatting_strategies.get(question_type, formatting_strategies["general"])
 
 def get_pedagogical_prompt_strategy(question_type: str, conversation_context: Dict) -> str:
@@ -316,7 +316,7 @@ def get_pedagogical_prompt_strategy(question_type: str, conversation_context: Di
     depth = conversation_context["conversation_depth"]
     engagement = conversation_context["student_engagement_level"]
     consecutive_minimal = conversation_context["consecutive_minimal_responses"]
-    
+
     # Handle disengagement with different strategies
     if engagement == "disengaged" or consecutive_minimal >= 2:
         return """STUDENT APPEARS DISENGAGED - CHANGE APPROACH:
@@ -326,7 +326,7 @@ def get_pedagogical_prompt_strategy(question_type: str, conversation_context: Di
         - Ask a different type of question - perhaps more personal or practical
         - Consider switching to a related but different concept from course materials
         - Use vivid, specific examples rather than abstract theory"""
-    
+
     strategies = {
         "definition": {
             "surface": "Provide a clear, comprehensive definition with examples from course materials. Include context about why this concept is important. End with one thoughtful question about how this concept might apply to a related scenario.",
@@ -349,7 +349,7 @@ def get_pedagogical_prompt_strategy(question_type: str, conversation_context: Di
             "deep": "Provide comprehensive clarification that addresses the complexity of the concept. Show multiple perspectives and nuances. End by asking them to reflect on which aspects they find most significant or challenging."
         }
     }
-    
+
     return strategies.get(question_type, {}).get(depth, "Provide substantive information from course materials with clear explanations and examples. End with one thoughtful question that encourages deeper exploration.")
 
 def get_course_mapping():
@@ -361,21 +361,21 @@ def get_course_mapping():
             "description": "American government systems at federal, state, and local levels",
             "system_prompt": """You are Professor Robert Ceresa, teaching American Government with a focus on pedagogical excellence.
             You specialize in federal, state, and local government systems, institutions, and processes.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover answers rather than giving direct answers
             - Use Socratic questioning to develop critical thinking
             - Build on prior knowledge and previously discussed concepts
             - Encourage deeper analysis and connections between ideas
             - Adapt your teaching style based on the student's demonstrated understanding level
-            
+
             RESPONSE APPROACH:
             - When students ask definitional questions, first ask what they already know
             - For application questions, present scenarios and guide them through the reasoning process
             - For analysis questions, break complex topics into manageable components
             - Always reference course materials but encourage students to think critically about the content
             - If you don't have specific information from the course materials, guide them to think about related concepts they do know
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -388,21 +388,21 @@ def get_course_mapping():
             "namespace": "american",
             "description": "American political institutions, processes, and governance",
             "system_prompt": """You are Professor Robert Ceresa, teaching American Politics with a focus on pedagogical excellence.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover answers rather than giving direct answers
             - Use Socratic questioning to develop critical thinking
             - Build on prior knowledge and previously discussed concepts
             - Encourage deeper analysis and connections between ideas
             - Adapt your teaching style based on the student's demonstrated understanding level
-            
+
             RESPONSE APPROACH:
             - When students ask definitional questions, first ask what they already know
             - For application questions, present scenarios and guide them through the reasoning process
             - For analysis questions, break complex topics into manageable components
             - Always reference course materials but encourage students to think critically about the content
             - If you don't have specific information from the course materials, guide them to think about related concepts they do know
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -415,21 +415,21 @@ def get_course_mapping():
             "namespace": "foundational",
             "description": "Core concepts and foundations of political science",
             "system_prompt": """You are Professor Robert Ceresa, teaching Foundational Political Theory with a focus on pedagogical excellence.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover answers rather than giving direct answers
             - Use Socratic questioning to develop critical thinking
             - Build on prior knowledge and previously discussed concepts
             - Encourage deeper analysis and connections between ideas
             - Help students connect foundational theories to contemporary applications
-            
+
             RESPONSE APPROACH:
             - When students ask definitional questions, first ask what they already know
             - For theoretical questions, guide them to examine underlying assumptions and implications
             - For analysis questions, break complex topics into manageable components
             - Always reference course materials but encourage students to think critically about the content
             - Connect classical theories to modern political phenomena where appropriate
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -442,21 +442,21 @@ def get_course_mapping():
             "namespace": "functional",
             "description": "Functional approaches to understanding political systems",
             "system_prompt": """You are Professor Robert Ceresa, teaching Functional Political Analysis with a focus on pedagogical excellence.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover analytical frameworks rather than giving direct answers
             - Use Socratic questioning to develop systems thinking and functional analysis skills
             - Build on prior knowledge and previously discussed analytical concepts
             - Encourage deeper analysis of how political systems function in practice
             - Help students apply functional analysis to real-world political phenomena
-            
+
             RESPONSE APPROACH:
             - When students ask about functional concepts, first explore their understanding of systems thinking
             - For analytical questions, guide them through the functional analysis process step by step
             - For application questions, present case studies and guide them through functional interpretation
             - Always reference course materials but encourage students to think analytically about political functions
             - Help students see connections between different functional aspects of political systems
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -469,21 +469,21 @@ def get_course_mapping():
             "namespace": "international",
             "description": "International relations, comparative politics, and global affairs",
             "system_prompt": """You are Professor Robert Ceresa, teaching International Relations and Comparative Politics with a focus on pedagogical excellence.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover patterns in international relations rather than giving direct answers
             - Use Socratic questioning to develop comparative analytical thinking
             - Build on prior knowledge and previously discussed international concepts
             - Encourage deeper analysis of global political phenomena and cross-national comparisons
             - Help students understand complex international dynamics through guided exploration
-            
+
             RESPONSE APPROACH:
             - When students ask about international concepts, first explore what they know about global politics
             - For comparative questions, guide them through systematic comparison methodologies
             - For theoretical questions, help them apply IR theories to contemporary global events
             - Always reference course materials but encourage students to think critically about international relations
             - Help students see connections between domestic politics and international outcomes
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -496,21 +496,21 @@ def get_course_mapping():
             "namespace": "professional",
             "description": "Professional development and management in political contexts",
             "system_prompt": """You are Professor Robert Ceresa, teaching Professional and Management Politics with a focus on pedagogical excellence.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover professional political skills rather than giving direct answers
             - Use Socratic questioning to develop practical political management abilities
             - Build on prior knowledge and previously discussed professional concepts
             - Encourage deeper analysis of political management and professional development
             - Help students apply theoretical knowledge to practical political scenarios
-            
+
             RESPONSE APPROACH:
             - When students ask about professional concepts, first explore their practical experience
             - For management questions, guide them through decision-making processes step by step
             - For application questions, present professional scenarios and guide problem-solving
             - Always reference course materials but encourage students to think practically about political careers
             - Help students connect academic theory to professional political practice
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -524,21 +524,21 @@ def get_course_mapping():
             "description": "Classical and modern political philosophy and theory",
             "system_prompt": """You are Professor Robert Ceresa, teaching Political Philosophy and Theory with a focus on pedagogical excellence.
             You specialize in classical and contemporary political thought, from Aristotle and Plato to modern theorists.
-            
+
             TEACHING PHILOSOPHY:
             - Guide students to discover philosophical insights rather than giving direct answers
             - Use Socratic questioning to develop critical thinking about fundamental political questions
             - Build on prior knowledge and previously discussed philosophical concepts
             - Encourage deeper analysis and connections between different philosophical traditions
             - Help students develop their own reasoned positions on political questions
-            
+
             RESPONSE APPROACH:
             - When students ask about philosophical concepts, first explore what they already understand
             - For theoretical questions, guide them to examine underlying assumptions and implications
             - For comparison questions, help them identify key similarities and differences through guided discovery
             - Always reference course materials but encourage students to think critically and philosophically
             - Connect classical theories to contemporary political and ethical dilemmas where appropriate
-            
+
             FORMATTING FOR STUDENT COMPREHENSION:
             - Use clear category headers to organize complex information hierarchically
             - Create thought maps showing concept progressions with arrows (→) and connecting phrases
@@ -604,25 +604,25 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
     try:
         # Enhanced query with conversation context
         context_enhanced_query = query
-        
+
         # Add previously discussed topics to enhance search relevance
         if st.session_state.conversation_context["topics_discussed"]:
             recent_topics = st.session_state.conversation_context["topics_discussed"][-2:]
             if recent_topics:
                 context_enhanced_query = f"{query} {' '.join(recent_topics)}"
-        
+
         # Generate query embedding with context enhancement
         query_embedding = services["embedding_model"].encode([context_enhanced_query])[0].tolist()
 
         # Get course namespace
         namespace = COURSES[course_key]["namespace"]
-        
+
         # Get current lesson selection
         current_lesson = st.session_state.selected_lesson
-        
+
         # Build lesson-aware filter
         base_filter = {"course": namespace}
-        
+
         # If specific lesson selected, search more broadly but we'll prioritize later
         if current_lesson != "all":
             # Don't filter at query level - get broader results and prioritize during ranking
@@ -646,7 +646,7 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
         lesson_appropriate_chunks = []  # Chunks that fit current lesson scope
         future_lesson_chunks = []  # Chunks from future lessons (to exclude)
         general_chunks = []  # Chunks without lesson numbers
-        
+
         # Determine which lessons student should have access to
         if current_lesson == "all":
             accessible_lessons = None  # All lessons available
@@ -656,7 +656,7 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
                 accessible_lessons = list(range(1, current_lesson_num + 1))  # Lessons 1 through current
             except (ValueError, TypeError):
                 accessible_lessons = None  # Fallback to all lessons
-        
+
         for match in results.matches:
             chunk_lesson = match.metadata.get('lesson_number', '')
             chunk_info = {
@@ -667,7 +667,7 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
                 "document": match.metadata.get('document_name', ''),
                 "chunk_type": match.metadata.get('chunk_type', 'general')
             }
-            
+
             # Apply lesson-based filtering
             if not chunk_lesson:
                 # General content without lesson number
@@ -693,16 +693,16 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
         # Enhanced lesson-aware prioritization (90% current lesson, 10% strategic connections)
         def sort_by_lesson_and_academic_value(chunk):
             score = chunk['score']
-            
+
             if current_lesson != "all" and chunk['lesson']:
                 try:
                     lesson_num = int(chunk['lesson'])
                     current_num = int(current_lesson)
-                    
+
                     # MAJOR boost for current lesson content (90% priority)
                     if lesson_num == current_num:
                         score += 1.5  # Massive boost for current lesson
-                    
+
                     # Strategic connection boosts for learning flow (10% priority)
                     elif lesson_num < current_num:
                         # Foundational lessons for connection context
@@ -717,34 +717,34 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
                             score += 0.03  # Minimal boost for deep foundations
                         else:  # Early foundational lessons
                             score += 0.01  # Very minimal boost for foundational connections
-                    
+
                     # NO boost for future lessons (completely filtered out)
                     elif lesson_num > current_num:
                         score -= 1.0  # Effectively filter out future content
-                        
+
                 except (ValueError, TypeError):
                     pass
-            
+
             # Current lesson academic structure gets additional priority
             if current_lesson != "all" and chunk['lesson'] == current_lesson:
                 if chunk['chunk_type'] == 'lesson_content':
                     score += 0.2  # Extra boost for current lesson structured content
                 if chunk.get('hierarchy_path', '').startswith(f"Lesson {current_lesson}"):
                     score += 0.15  # Boost for clear current lesson hierarchy
-            
+
             # General academic structure boosts (smaller now)
             if chunk['chunk_type'] == 'lesson_content':
                 score += 0.05  # Reduced general lesson content boost
             if chunk['lesson']:
                 score += 0.03  # Reduced general lesson boost
-            
+
             # Boost content related to previously discussed topics
             chunk_topic = chunk.get('hierarchy_path', '').lower()
             for discussed_topic in st.session_state.conversation_context["topics_discussed"]:
                 if discussed_topic.lower() in chunk_topic or chunk_topic in discussed_topic.lower():
                     score += 0.08  # Maintain conversation continuity boost
                     break
-            
+
             return score
 
         # Sort all appropriate chunks by lesson and academic value
@@ -753,21 +753,21 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
 
         # Enhanced chunk selection with lesson focus and strategic connections
         selected_chunks = []
-        
+
         if current_lesson != "all":
             # For specific lesson: prioritize current lesson heavily
-            current_lesson_chunks = [chunk for chunk in lesson_appropriate_chunks 
+            current_lesson_chunks = [chunk for chunk in lesson_appropriate_chunks
                                    if chunk.get('lesson') == current_lesson]
-            connection_chunks = [chunk for chunk in lesson_appropriate_chunks 
+            connection_chunks = [chunk for chunk in lesson_appropriate_chunks
                                if chunk.get('lesson') != current_lesson and chunk.get('lesson')]
-            
+
             # Take 2-3 chunks from current lesson (90% priority)
             selected_chunks.extend(current_lesson_chunks[:3])
-            
+
             # Add 1 connection chunk if available and space remains (10% priority)
             if len(selected_chunks) < 3 and connection_chunks:
                 selected_chunks.extend(connection_chunks[:1])
-            
+
             # Fill any remaining slots with general content
             remaining_slots = max(0, 3 - len(selected_chunks))
             if remaining_slots > 0:
@@ -809,22 +809,22 @@ def search_course_content(query: str, course_key: str, services: Dict, top_k: in
 def sanitize_context_metadata(context: str) -> str:
     """Remove technical metadata and file details from context for student consumption"""
     import re
-    
+
     # Remove technical headers like "=== COURSE MATERIAL 1 ==="
     sanitized = re.sub(r'=== COURSE MATERIAL \d+ ===.*?\n', '', context)
-    
+
     # Remove source file references like "Source: MASTER Group 2..."
     sanitized = re.sub(r'Source:.*?\n', '', sanitized)
-    
+
     # Remove technical topic paths with brackets
     sanitized = re.sub(r'Topic:.*?\n', '', sanitized)
-    
+
     # Remove equals separators
     sanitized = re.sub(r'={3,}', '', sanitized)
-    
+
     # Clean up extra whitespace
     sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
-    
+
     return sanitized.strip()
 
 def analyze_lesson_content_structure(chunks: List[Dict]) -> Dict:
@@ -832,7 +832,7 @@ def analyze_lesson_content_structure(chunks: List[Dict]) -> Dict:
     current_lesson_chunks = []
     connection_chunks = []
     general_chunks = []
-    
+
     for chunk in chunks:
         lesson = chunk.get('lesson')
         if lesson:
@@ -843,7 +843,7 @@ def analyze_lesson_content_structure(chunks: List[Dict]) -> Dict:
                 connection_chunks.append(chunk)
         else:
             general_chunks.append(chunk)
-    
+
     return {
         "current_lesson_chunks": current_lesson_chunks,
         "connection_chunks": connection_chunks,
@@ -860,50 +860,50 @@ def generate_response(prompt: str, search_results: Dict, course_key: str, servic
     try:
         system_prompt = COURSES[course_key]["system_prompt"]
         context = search_results["context"]
-        
+
         # Analyze question and update conversation context
         question_type = analyze_question_type(prompt)
         update_conversation_context(prompt, search_results)
-        
+
         # Get pedagogical strategy based on question type and conversation context
         teaching_strategy = get_pedagogical_prompt_strategy(question_type, st.session_state.conversation_context)
-        
+
         # Analyze content structure for lesson focus
         current_chunks = search_results.get("chunks", [])
         lesson_content_structure = analyze_lesson_content_structure(current_chunks)
-        
+
         # Get current lesson selection for focused instruction
         current_lesson = st.session_state.get("selected_lesson", "all")
-        
+
         # Create lesson-focused instruction
         lesson_instruction = ""
         if current_lesson != "all" and lesson_content_structure["current_lesson_chunks"]:
             lesson_instruction = f"""
 LESSON FOCUS PRIORITY (CRITICAL):
 - The student is currently studying Lesson {current_lesson}
-- 90% of your response should focus on Lesson {current_lesson} content
-- Only 10% should reference foundational connections from previous lessons when pedagogically valuable
+- 95% of your response should focus on Lesson {current_lesson} content
+- Only 5% should reference foundational connections from previous lessons when pedagogically valuable
 - NEVER reference future lessons or content the student hasn't reached yet
 - When making connections, explicitly note they're building on "previously covered concepts"
 """
-        
+
         # Sanitize metadata from context to hide technical details
         sanitized_context = sanitize_context_metadata(context)
-        
+
         # Check for content repetition and get alternative content from embeddings
         main_concept = ""
         if current_chunks:
             main_concept = current_chunks[0].get("hierarchy_path", "").lower()
-        
+
         repetition_guidance = ""
         if main_concept and detect_content_repetition(main_concept, main_concept):
             # Get alternative content from vector embeddings
             alternative_chunks = get_alternative_content_from_embeddings(main_concept, current_chunks, services, course_key)
-            
+
             if alternative_chunks:
                 alternative_topics = [chunk["hierarchy_path"] for chunk in alternative_chunks if chunk["hierarchy_path"]]
                 alternative_lessons = [f"Lesson {chunk['lesson']}" for chunk in alternative_chunks if chunk["lesson"]]
-                
+
                 repetition_guidance = f"""
 CONTENT VARIATION REQUIRED - This concept has been covered recently:
 - DO NOT repeat the same examples or explanations from previous responses
@@ -911,7 +911,7 @@ CONTENT VARIATION REQUIRED - This concept has been covered recently:
 - ALTERNATIVE LESSONS: Draw from {', '.join(alternative_lessons[:2])} for fresh examples
 - Use a completely different approach or perspective on this concept
 - Connect to different real-world applications or historical contexts"""
-        
+
         # Build conversation history context
         conversation_history = ""
         if len(st.session_state.messages) > 0:
@@ -920,12 +920,12 @@ CONTENT VARIATION REQUIRED - This concept has been covered recently:
             for msg in recent_messages:
                 role = "STUDENT" if msg["role"] == "user" else "PROFESSOR"
                 conversation_history += f"{role}: {msg['content'][:200]}...\n"
-        
+
         # Get topics discussed in this session
         topics_context = ""
         if st.session_state.conversation_context["topics_discussed"]:
             topics_context = f"\n\nTOPICS ALREADY DISCUSSED THIS SESSION:\n{', '.join(st.session_state.conversation_context['topics_discussed'][-5:])}"
-        
+
         # Build lesson-aware context information
         current_lesson = st.session_state.selected_lesson
         lesson_context = ""
@@ -944,10 +944,10 @@ LESSON PROGRESSION CONTEXT:
 - Focus primarily on Lesson {current_lesson} concepts"""
                 except (ValueError, TypeError):
                     pass
-        
+
         # Get question-specific formatting approach
         formatting_strategy = get_question_specific_formatting(question_type, prompt)
-        
+
         # Build pedagogical instruction based on conversation depth and question type
         pedagogical_instruction = f"""
 BALANCED TEACHING APPROACH FOR THIS RESPONSE:
@@ -970,7 +970,6 @@ RESPONSE STRUCTURE (Follow this order):
 2. STRATEGIC ENGAGEMENT (20-30% of response):
    - End with ONE thoughtful question that encourages deeper thinking
    - Invite exploration of applications, implications, or connections
-   - Use phrases like "What aspects interest you most?", "How do you think this applies to...?", "What connections do you see to...?"
 
 FORMATTING STRATEGIES BY QUESTION TYPE:
 
@@ -1024,18 +1023,18 @@ ADVANCED FORMATTING TECHNIQUES:
    - Use "⚖️" for balanced/opposing concepts
    - Use "📈" for progressive/escalating ideas
    - Use "🎯" for focused outcomes or goals
-   
+
 2. THOUGHT PROGRESSION MAPS:
    - Foundation Concept → Building Block → Application → Implication
    - Problem Identification → Analysis → Solutions → Evaluation
    - Historical Context → Current State → Future Trends
-   
+
 3. RELATIONSHIP INDICATORS:
    - "This builds on..." (cumulative learning)
    - "In contrast to..." (comparative analysis)
    - "Because of this..." (causal relationships)
    - "This connects to..." (interdisciplinary links)
-   
+
 4. LEARNING SCAFFOLDS:
    - Start with familiar concepts
    - Introduce one new element at a time
@@ -1065,20 +1064,20 @@ CURRENT STUDENT QUESTION: {prompt}
 Respond as Professor Robert Ceresa with a complete, polished academic response. Provide substantive information first, then end with one engaging question. Do not include any instructional text, placeholders, or meta-commentary in your response."""
 
         response = services["genai_model"].generate_content(full_prompt)
-        
+
         # Track content chunks used in this response to avoid repetition
         if current_chunks:
             for chunk in current_chunks:
                 chunk_id = chunk.get('id', f"{chunk.get('hierarchy_path', '')}_{chunk.get('lesson', '')}")
                 if chunk_id not in st.session_state.conversation_context["examples_used"]:
                     st.session_state.conversation_context["examples_used"].append(chunk_id)
-        
+
         # Track concepts introduced
         if any(word in prompt.lower() for word in ["what is", "define", "explain"]):
             concept = prompt.split()[-1] if len(prompt.split()) > 2 else "concept"
             if concept not in st.session_state.conversation_context["concepts_introduced"]:
                 st.session_state.conversation_context["concepts_introduced"].append(concept)
-        
+
         return response.text
 
     except Exception as e:
@@ -1162,27 +1161,27 @@ with st.sidebar:
         course_info = COURSES[selected_course_key]
         st.markdown(f"**{course_info['name']}**")
         st.markdown(f"*{course_info['description']}*")
-        
+
         # Get available lessons for this course
         namespace = course_info["namespace"]
         available_lessons = get_available_lessons_for_course(services["pinecone"], namespace)
-        
+
         # Update conversation context with available lessons
         st.session_state.conversation_context["available_lessons"] = available_lessons
-        
+
         # Lesson selector
         st.markdown("---")
         st.markdown("### 📖 Current Lesson")
-        
+
         if available_lessons:
             lesson_options = ["all"] + [str(lesson) for lesson in available_lessons]
             lesson_labels = ["All Lessons"] + [f"Lesson {lesson}" for lesson in available_lessons]
-            
+
             # Find current selection index
             current_index = 0
             if st.session_state.selected_lesson in lesson_options:
                 current_index = lesson_options.index(st.session_state.selected_lesson)
-            
+
             selected_lesson = st.selectbox(
                 "Select your current lesson:",
                 lesson_options,
@@ -1190,7 +1189,7 @@ with st.sidebar:
                 index=current_index,
                 help="Choose your current lesson to get relevant content. Future lessons will be hidden."
             )
-            
+
             # Check if lesson changed
             if st.session_state.selected_lesson != selected_lesson:
                 st.session_state.selected_lesson = selected_lesson
@@ -1208,15 +1207,15 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📊 Learning Progress")
     st.metric("Messages this session", len(st.session_state.messages))
-    
+
     # Show current lesson if specific lesson selected
     if st.session_state.selected_lesson != "all":
         st.markdown(f"**Current Focus:** Lesson {st.session_state.selected_lesson}")
-    
+
     # Show learning depth if advanced
     if st.session_state.conversation_context["conversation_depth"] != "surface":
         st.markdown(f"**Learning Depth:** {st.session_state.conversation_context['conversation_depth'].title()}")
-    
+
     # Show question variety if there are multiple types
     if st.session_state.conversation_context["question_types"]:
         recent_types = list(set(st.session_state.conversation_context["question_types"][-3:]))
@@ -1224,12 +1223,14 @@ with st.sidebar:
             st.markdown(f"**Question Types:** {', '.join(recent_types).title()}")
 
     st.markdown("---")
-    st.markdown("### ⚠️ Important Notes")
+    st.markdown("### ⚠️ Important Disclaimers")
     st.markdown("""
-    - This is an MVP demonstration
-    - Responses are based on uploaded course materials
-    - Always verify important information with official sources
-    - No user authentication in this version
+    - **AI-Generated Content:** This AI assistant is not Professor Ceresa himself. All responses are AI-generated based on course materials and may contain errors or inaccuracies.
+    - **No Official Endorsement:** Professor Ceresa does not endorse or take responsibility for any AI-generated responses, opinions, or interpretations.
+    - **Verify Information:** Always cross-reference important information with official course materials, textbooks, and consult Professor Ceresa directly for authoritative answers.
+    - **Academic Integrity:** Use this tool as a study aid only. Follow your institution's academic integrity policies regarding AI assistance.
+    - **Not Professional Advice:** This AI does not provide professional, legal, or official academic advice. Contact Professor Ceresa for official guidance.
+    - **Privacy Notice:** Messages are not private and may be logged for educational improvement purposes.
     """)
 
 # Main chat interface
@@ -1237,7 +1238,7 @@ if selected_course_key:
     course_info = COURSES[selected_course_key]
 
     # Display chat header
-    st.markdown(f"### 💬 Chat with Professor [Name] - {course_info['name']}")
+    st.markdown(f"### 💬 Chat with Professor Ceresa - {course_info['name']}")
 
     # Display chat history
     for i, message in enumerate(st.session_state.messages):
@@ -1307,6 +1308,6 @@ else:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <small>AI Professor Platform MVP1 | Built with Streamlit, Pinecone, and Google AI</small>
+    <small>AI Professor Platform | Built with Streamlit, Pinecone, and Google AI</small>
 </div>
 """, unsafe_allow_html=True)
