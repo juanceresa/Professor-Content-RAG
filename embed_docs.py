@@ -122,7 +122,7 @@ class DocumentProcessor:
         """Extract text from various file formats"""
         suffix = file_path.suffix.lower()
 
-        if suffix == '.docx':
+        if suffix in ['.docx', '.doc']:
             return self.extract_text_from_docx(file_path)
         elif suffix == '.pdf':
             return self.extract_text_from_pdf(file_path)
@@ -375,8 +375,18 @@ class DocumentProcessor:
             hierarchy_info = self._extract_chunk_hierarchy(chunk_text)
 
             # Create namespace for consistency with Pinecone storage
-            namespace = course_name.lower().replace(" ", "_").replace("-", "_")
-            
+            # Find the course key that matches this course name
+            course_mapping = get_course_mapping()
+            namespace = None
+            for key, config in course_mapping.items():
+                if config['name'] == course_name:
+                    namespace = key
+                    break
+
+            if not namespace:
+                # Fallback: create namespace from course name
+                namespace = course_name.lower().replace(" ", "_").replace("-", "_")
+
             metadata = {
                 'course': namespace,  # Use namespace for consistency with search filter
                 'course_name': course_name,  # Keep original course name for display
@@ -389,10 +399,10 @@ class DocumentProcessor:
                 'processed_date': datetime.now().isoformat(),
                 'text': chunk_text,  # Store text in metadata for Pinecone
 
-                # Hierarchical metadata
-                'lesson_number': hierarchy_info.get('lesson_number'),
-                'main_topic': hierarchy_info.get('main_topic'),
-                'hierarchy_path': hierarchy_info.get('hierarchy_path'),
+                # Hierarchical metadata (ensure no null values)
+                'lesson_number': hierarchy_info.get('lesson_number') or "",
+                'main_topic': hierarchy_info.get('main_topic') or "",
+                'hierarchy_path': hierarchy_info.get('hierarchy_path') or "General Content",
                 'depth_level': hierarchy_info.get('depth_level', 0),
                 'chunk_type': hierarchy_info.get('chunk_type', 'general')
             }
@@ -541,6 +551,69 @@ class PineconeUploader:
         """Get statistics about the Pinecone index"""
         return self.index.describe_index_stats()
 
+def get_course_mapping():
+    """Define how document folders map to chatbot courses"""
+    return {
+        "federal_state_local": {
+            "name": "Federal, State, and Local Government",
+            "folders": ["govt", "local"],
+            "description": "American government systems at federal, state, and local levels",
+            "system_prompt": """You are Professor Robert Ceresa, teaching American Government.
+            You specialize in federal, state, and local government systems, institutions, and processes.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        },
+        "american": {
+            "name": "American Political System",
+            "folders": ["american"],
+            "description": "American political institutions, processes, and governance",
+            "system_prompt": """You are Professor Robert Ceresa, teaching American Politics.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        },
+        "foundational": {
+            "name": "Foundational Political Theory",
+            "folders": ["foundational"],
+            "description": "Core concepts and foundations of political science",
+            "system_prompt": """You are Professor Robert Ceresa, teaching Foundational Political Theory.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        },
+        "functional": {
+            "name": "Functional Political Analysis",
+            "folders": ["functional"],
+            "description": "Functional approaches to understanding political systems",
+            "system_prompt": """You are Professor Robert Ceresa, teaching Functional Political Analysis.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        },
+        "international": {
+            "name": "International Relations & Comparative Politics",
+            "folders": ["international"],
+            "description": "International relations, comparative politics, and global affairs",
+            "system_prompt": """You are Professor Robert Ceresa, teaching International Relations and Comparative Politics.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        },
+        "professional": {
+            "name": "Professional & Management Politics",
+            "folders": ["professional"],
+            "description": "Professional development and management in political contexts",
+            "system_prompt": """You are Professor Robert Ceresa, teaching Professional and Management Politics.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        },
+        "theory": {
+            "name": "Political Philosophy & Theory",
+            "folders": ["theory"],
+            "description": "Classical and modern political philosophy and theory",
+            "system_prompt": """You are Professor Robert Ceresa, teaching Political Philosophy and Theory.
+            You specialize in classical and contemporary political thought, from Aristotle and Plato to modern theorists.
+            Answer questions based on the course materials provided. Be scholarly but accessible to undergraduate students.
+            If you don't have specific information from the course materials, say so clearly."""
+        }
+    }
+
 def process_course_content(
     data_directory: Path,
     pinecone_api_key: str,
@@ -560,73 +633,90 @@ def process_course_content(
     doc_processor = DocumentProcessor()
     uploader = PineconeUploader(pinecone_api_key, pinecone_index_name)
 
-    # Find all class folders in data directory
-    class_folders = [folder for folder in data_path.iterdir()
-                    if folder.is_dir() and not folder.name.startswith('.')]
+    # Get course mapping configuration
+    course_mapping = get_course_mapping()
 
-    if not class_folders:
-        logger.warning(f"No class folders found in {data_path}")
-        return
+    # Find all available folders
+    available_folders = [folder.name for folder in data_path.iterdir()
+                        if folder.is_dir() and not folder.name.startswith('.')]
 
-    logger.info(f"Found {len(class_folders)} class folders: {[f.name for f in class_folders]}")
+    logger.info(f"Found {len(available_folders)} document folders: {available_folders}")
 
-    # Process each class folder
+    # Process each configured course
     total_chunks_processed = 0
 
-    for class_folder in class_folders:
+    for course_key, course_config in course_mapping.items():
         logger.info(f"\n{'='*50}")
-        logger.info(f"Processing class: {class_folder.name}")
-        logger.info(f"Directory: {class_folder}")
+        logger.info(f"Processing course: {course_config['name']}")
+        logger.info(f"Course key: {course_key}")
+        logger.info(f"Source folders: {course_config['folders']}")
         logger.info(f"{'='*50}")
 
-        # Find all supported documents in this class folder
-        supported_extensions = {'.pdf', '.docx', '.doc'}
-        class_documents = []
+        # Check which folders exist for this course
+        course_folders = []
+        for folder_name in course_config['folders']:
+            folder_path = data_path / folder_name
+            if folder_path.exists() and folder_path.is_dir():
+                course_folders.append(folder_path)
+            else:
+                logger.warning(f"Folder not found: {folder_name}")
 
-        for ext in supported_extensions:
-            # Look for files in class folder and any subdirectories
-            class_documents.extend(class_folder.glob(f"**/*{ext}"))
-
-        if not class_documents:
-            logger.warning(f"No documents found in {class_folder}")
+        if not course_folders:
+            logger.warning(f"No folders found for course {course_config['name']}")
             continue
 
-        logger.info(f"Found {len(class_documents)} documents in {class_folder.name}")
-        for doc in class_documents:
+        # Find all supported documents across all folders for this course
+        supported_extensions = {'.pdf', '.docx', '.doc'}
+        course_documents = []
+
+        for folder_path in course_folders:
+            logger.info(f"Scanning folder: {folder_path.name}")
+            for ext in supported_extensions:
+                # Look for files in folder and any subdirectories
+                docs = list(folder_path.glob(f"**/*{ext}"))
+                course_documents.extend(docs)
+                logger.info(f"  Found {len(docs)} {ext} files in {folder_path.name}")
+
+        if not course_documents:
+            logger.warning(f"No documents found for course {course_config['name']}")
+            continue
+
+        logger.info(f"Total documents for {course_config['name']}: {len(course_documents)}")
+        for doc in course_documents:
             logger.info(f"  - {doc.name}")
 
-        # Process all documents for this class
-        class_chunks = []
-        for doc_path in class_documents:
+        # Process all documents for this course
+        course_chunks = []
+        for doc_path in course_documents:
             try:
                 logger.info(f"Processing: {doc_path.name}")
                 chunks = doc_processor.process_document(
                     file_path=doc_path,
-                    course_name=class_folder.name,
+                    course_name=course_config['name'],  # Use the display name
                     professor_name=professor_name
                 )
-                class_chunks.extend(chunks)
+                course_chunks.extend(chunks)
                 logger.info(f"  Created {len(chunks)} chunks from {doc_path.name}")
 
             except Exception as e:
                 logger.error(f"Error processing {doc_path}: {e}")
                 continue
 
-        if not class_chunks:
-            logger.warning(f"No chunks created for class {class_folder.name}")
+        if not course_chunks:
+            logger.warning(f"No chunks created for course {course_config['name']}")
             continue
 
-        # Generate embeddings for all chunks in this class
-        logger.info(f"Generating embeddings for {len(class_chunks)} chunks...")
-        class_chunks = doc_processor.generate_embeddings(class_chunks)
+        # Generate embeddings for all chunks in this course
+        logger.info(f"Generating embeddings for {len(course_chunks)} chunks...")
+        course_chunks = doc_processor.generate_embeddings(course_chunks)
 
-        # Upload to Pinecone with class-specific namespace
-        namespace = class_folder.name.lower().replace(" ", "_").replace("-", "_")
+        # Upload to Pinecone with course-specific namespace
+        namespace = course_key  # Use the course key as namespace
         logger.info(f"Uploading to Pinecone namespace: {namespace}")
-        uploader.upload_chunks(class_chunks, namespace)
+        uploader.upload_chunks(course_chunks, namespace)
 
-        total_chunks_processed += len(class_chunks)
-        logger.info(f"Successfully processed {len(class_chunks)} chunks for {class_folder.name}")
+        total_chunks_processed += len(course_chunks)
+        logger.info(f"Successfully processed {len(course_chunks)} chunks for {course_config['name']}")
 
     # Print final stats
     stats = uploader.get_index_stats()
@@ -634,7 +724,7 @@ def process_course_content(
     logger.info(f"PROCESSING COMPLETE")
     logger.info(f"{'='*50}")
     logger.info(f"Total chunks processed: {total_chunks_processed}")
-    logger.info(f"Classes processed: {len(class_folders)}")
+    logger.info(f"Courses processed: {len(course_mapping)}")
     logger.info(f"Pinecone index stats: {stats}")
 
 def scan_data_directory(data_directory: Path) -> Dict:
@@ -693,8 +783,8 @@ def main():
 
     # Configuration - UPDATE THESE PATHS AND KEYS
     DATA_DIRECTORY = "documents"  # Path to your documents folder
-    PROFESSOR_NAME = "Professor [Father's Name]"
-    PINECONE_API_KEY = "your-pinecone-api-key"
+    PROFESSOR_NAME = "Professor Robert Ceresa"
+    PINECONE_API_KEY = "pcsk_UySHG_ErRr5FNDgTKZeC1ZwJSFnjBm8Ggt5aTNZEcJtpuVyYL5ST4No7J9xbWqjVo4UfN"
     PINECONE_INDEX_NAME = "ai-professor-platform"
 
     print("AI Professor Platform - Document Processing")
@@ -740,10 +830,8 @@ def main():
     print(f"3. Upload to Pinecone index: {PINECONE_INDEX_NAME}")
     print(f"4. Create separate namespaces for each class")
 
-    response = input("\nProceed with processing? (y/N): ")
-    if response.lower() != 'y':
-        print("Processing cancelled.")
-        return
+    print("\nProceeding with processing...")
+    # Auto-proceed without user confirmation
 
     # Process all courses
     try:
@@ -763,3 +851,6 @@ def main():
         logger.error(f"Processing failed: {e}")
         print(f"\n❌ Processing failed: {e}")
         print("Check the logs above for details.")
+
+if __name__ == "__main__":
+    main()
