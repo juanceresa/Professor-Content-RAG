@@ -57,13 +57,64 @@ class ResponseGenerator:
                         "Failed to update lesson selection to %r: %s", selected_lesson, e
                     )
 
-            # 1) Search for relevant content
-            search_results = self.content_search.search_course_content(
-                query=prompt,
-                course_namespace=course_config.namespace,
-                conversation_context=self.conversation_manager.context,
-                current_lesson=self.conversation_manager.context.current_lesson,
-            )
+            # 1) Search for relevant content using dual indexing strategy
+            current_lesson = self.conversation_manager.context.current_lesson
+            
+            # Try dual search first (for courses with dual structure)
+            try:
+                search_results = self.content_search.search_course_content_dual(
+                    query=prompt,
+                    course_namespace=course_config.namespace,
+                    selected_lesson=current_lesson,
+                    conversation_context=self.conversation_manager.context,
+                )
+                
+                # Convert dual search results to expected format
+                if search_results and search_results.get("chunks"):
+                    # Format chunks into expected structure
+                    formatted_chunks = []
+                    for chunk in search_results["chunks"]:
+                        formatted_chunks.append({
+                            "text": chunk.get("text", ""),
+                            "score": chunk.get("score", 0),
+                            "lesson": chunk.get("lesson", ""),
+                            "hierarchy_path": chunk.get("source", ""),
+                            "document": chunk.get("source", ""),
+                            "chunk_type": "general"
+                        })
+                    
+                    # Format context from chunks
+                    context_parts = []
+                    for i, chunk in enumerate(formatted_chunks[:3]):  # Use top 3
+                        context_part = f"=== COURSE MATERIAL {i+1} ==="
+                        if chunk["lesson"]:
+                            context_part += f" (Lesson {chunk['lesson']})"
+                        context_part += f"\n\n{chunk['text']}"
+                        context_parts.append(context_part)
+                    
+                    search_results = {
+                        "chunks": formatted_chunks,
+                        "context": "\n\n" + "="*60 + "\n\n".join(context_parts) + "\n\n" + "="*60,
+                        "total_matches": search_results.get("total_found", len(formatted_chunks))
+                    }
+                else:
+                    # Fallback to legacy search if dual search returns no results
+                    search_results = self.content_search.search_course_content(
+                        query=prompt,
+                        course_namespace=course_config.namespace,
+                        conversation_context=self.conversation_manager.context,
+                        current_lesson=current_lesson,
+                    )
+                    
+            except Exception as e:
+                logger.warning(f"Dual search failed, falling back to legacy search: {e}")
+                # Fallback to legacy search method
+                search_results = self.content_search.search_course_content(
+                    query=prompt,
+                    course_namespace=course_config.namespace,
+                    conversation_context=self.conversation_manager.context,
+                    current_lesson=current_lesson,
+                )
 
             # Fallback for empty context
             search_results = search_results or {}

@@ -529,9 +529,28 @@ class DocumentProcessor:
         # Get document type for enhanced processing
         doc_type = self.infer_document_type(file_path)
         
-        # Create chunks using hierarchical chunking with document type awareness
-        chunks = self.intelligent_chunking(text, doc_type)
-        logger.info(f"Created {len(chunks)} chunks from {file_path}")
+        # Import improved chunking algorithm
+        import sys
+        sys.path.append('..')
+        from improved_chunking import create_improved_chunks
+        
+        # Extract lesson number if available
+        lesson_number = None
+        if 'lesson' in file_path.name.lower():
+            import re
+            match = re.search(r'lesson(\d+(?:\.\d+)?)', file_path.name.lower())
+            if match:
+                lesson_number = match.group(1)
+        
+        # Create chunks using improved algorithm
+        chunks = create_improved_chunks(
+            text=text, 
+            lesson_number=lesson_number,
+            min_size=300,     # Smaller minimum for academic content
+            target_size=700,  # Good balance for retrieval
+            max_size=1000     # Not too large for context windows
+        )
+        logger.info(f"Created {len(chunks)} improved chunks from {file_path}")
 
         # Create DocumentChunk objects with enhanced metadata
         document_chunks = []
@@ -580,10 +599,14 @@ class DocumentProcessor:
                 'conceptual_completeness': hierarchy_info.get('conceptual_completeness', 'complete')
             }
 
+            # Generate embedding for this chunk
+            embedding = self.embedding_model.encode([chunk_text])[0].tolist()
+
             document_chunks.append(DocumentChunk(
                 text=chunk_text,
                 metadata=metadata,
-                chunk_id=chunk_id
+                chunk_id=chunk_id,
+                embedding=embedding
             ))
 
         return document_chunks

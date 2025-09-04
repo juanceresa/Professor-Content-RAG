@@ -2,6 +2,7 @@ import logging
 import re
 from typing import Dict, Optional, List
 from conversation_manager import ConversationContext
+from dual_content_handler import DualContentHandler, ContentNamespaces
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,128 @@ class ContentSearchEngine:
     def __init__(self, embedding_model, pinecone_index):
         self.embedding_model = embedding_model
         self.pinecone_index = pinecone_index
+        self.dual_handler = DualContentHandler(pinecone_index)
+
+    def search_course_content_dual(
+        self,
+        query: str,
+        course_namespace: str,
+        selected_lesson: str = "all",
+        conversation_context = None,
+        top_k: int = 8
+    ) -> Dict:
+        """Enhanced search using dual indexing strategy (mastery + lesson boundaries)"""
+        try:
+            # Get appropriate namespaces for this course and lesson selection
+            content_namespaces = self.dual_handler.get_content_namespaces(course_namespace, selected_lesson)
+            
+            # Generate query embedding
+            query_embedding = self.embedding_model.encode([query])[0].tolist()
+            
+            if selected_lesson == "all":
+                # All lessons selected - search mastery knowledge only
+                return self._search_mastery_only(query_embedding, content_namespaces, top_k)
+            else:
+                # Specific lesson selected - search both mastery and lesson content
+                return self._search_mastery_plus_lesson(query_embedding, content_namespaces, selected_lesson, top_k)
+        
+        except Exception as e:
+            logger.error(f"Error in dual content search: {e}")
+            return {"chunks": [], "total_found": 0, "search_strategy": "error"}
+    
+    def _search_mastery_only(self, query_embedding: List[float], content_namespaces: ContentNamespaces, top_k: int) -> Dict:
+        """Search mastery knowledge only (for 'all lessons' selection)"""
+        try:
+            results = self.pinecone_index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                include_metadata=True,
+                namespace=content_namespaces.mastery,
+                filter={"content_type": "mastery"}
+            )
+            
+            chunks = []
+            for match in results.matches:
+                if match.score > 0.3:  # Lowered threshold for mastery content
+                    chunks.append({
+                        "text": match.metadata.get("text", ""),
+                        "score": match.score,
+                        "source": match.metadata.get("source", "mastery"),
+                        "content_type": "mastery",
+                        "lesson": None
+                    })
+            
+            return {
+                "chunks": chunks[:5],  # Top 5 for mastery-only
+                "total_found": len(chunks),
+                "search_strategy": "mastery_only"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in mastery-only search: {e}")
+            return {"chunks": [], "total_found": 0, "search_strategy": "mastery_error"}
+    
+    def _search_mastery_plus_lesson(self, query_embedding: List[float], content_namespaces: ContentNamespaces, 
+                                   selected_lesson: str, top_k: int) -> Dict:
+        """Search both mastery knowledge and specific lesson content"""
+        try:
+            # Search mastery content (for teaching style and conceptual understanding)
+            mastery_results = self.pinecone_index.query(
+                vector=query_embedding,
+                top_k=top_k // 2,  # Half from mastery
+                include_metadata=True,
+                namespace=content_namespaces.mastery,
+                filter={"content_type": "mastery"}
+            )
+            
+            # Search lesson-specific content (for boundaries)
+            lesson_results = self.pinecone_index.query(
+                vector=query_embedding,
+                top_k=top_k // 2,  # Half from lesson
+                include_metadata=True,
+                namespace=content_namespaces.lessons,
+                filter=content_namespaces.lesson_filter
+            )
+            
+            # Process and combine results
+            mastery_chunks = []
+            for match in mastery_results.matches:
+                if match.score > 0.2:  # Lower threshold for mastery
+                    mastery_chunks.append({
+                        "text": match.metadata.get("text", ""),
+                        "score": match.score,
+                        "source": match.metadata.get("source", "mastery"),
+                        "content_type": "mastery",
+                        "lesson": None,
+                        "weight": "conceptual"  # Used for teaching style
+                    })
+            
+            lesson_chunks = []
+            for match in lesson_results.matches:
+                if match.score > 0.2:  # Lower threshold for lessons
+                    lesson_chunks.append({
+                        "text": match.metadata.get("text", ""),
+                        "score": match.score,
+                        "source": match.metadata.get("source", f"lesson_{selected_lesson}"),
+                        "content_type": "lesson",
+                        "lesson": selected_lesson,
+                        "weight": "boundary"  # Used for scope boundaries
+                    })
+            
+            # Combine with lesson content weighted higher for relevance
+            all_chunks = lesson_chunks + mastery_chunks[:3]  # Prioritize lesson, add top mastery
+            
+            return {
+                "chunks": all_chunks[:5],  # Top 5 total
+                "total_found": len(mastery_chunks) + len(lesson_chunks),
+                "search_strategy": "mastery_plus_lesson",
+                "mastery_found": len(mastery_chunks),
+                "lesson_found": len(lesson_chunks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in mastery+lesson search: {e}")
+            return {"chunks": [], "total_found": 0, "search_strategy": "hybrid_error"}
 
     def search_course_content(
         self,
