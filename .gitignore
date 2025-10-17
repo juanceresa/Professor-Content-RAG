@@ -1,0 +1,38 @@
+# Environment and secrets
+.env
+.streamlit/
+
+# Virtual environment
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# Project documentation (updated via Claude)
+CLAUDE.md
+
+# Course content (sensitive data)
+documents/
+instructions/
+
+# Temporary and debug files
+debug_*.py
+temp_*.py
+*.tmp
+*.bak
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db

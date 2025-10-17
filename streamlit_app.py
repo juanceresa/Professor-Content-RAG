@@ -98,7 +98,7 @@ class StreamlitApp:
             return {
                 "pinecone": index,
                 "embedding_model": embedding_model,
-                "genai_model": genai.GenerativeModel("gemini-2.0-flash-exp"),
+                "genai_model": genai.GenerativeModel("gemini-2.0-flash-lite"),
             }
         except Exception as e:
             st.error(f"Failed to initialize services: {e}")
@@ -181,9 +181,6 @@ class StreamlitApp:
                 self._render_course_info(selected_course_key)
                 self._render_lesson_selector(selected_course_key)
 
-            # Render learning progress
-            self._render_learning_progress()
-
             # Render important disclaimers
             self._render_disclaimers()
 
@@ -243,28 +240,6 @@ class StreamlitApp:
             st.info("No lessons detected in course materials.")
             st.session_state.selected_lesson = "all"
 
-    def _render_learning_progress(self):
-        """Render learning progress metrics"""
-        st.markdown("---")
-        st.markdown("### 📊 Learning Progress")
-        st.metric("Messages this session", len(st.session_state.messages))
-
-        context_summary = self.conversation_manager.get_context_summary()
-
-        # Show current lesson if specific lesson selected
-        if st.session_state.selected_lesson != "all":
-            st.markdown(f"**Current Focus:** Lesson {st.session_state.selected_lesson}")
-
-        # Show learning depth if advanced
-        if context_summary["conversation_depth"] != "surface":
-            st.markdown(f"**Learning Depth:** {context_summary['conversation_depth'].title()}")
-
-        # Show question variety if there are multiple types
-        if context_summary["question_types"]:
-            if len(context_summary["question_types"]) > 1:
-                st.markdown(
-                    f"**Question Types:** {', '.join(context_summary['question_types']).title()}"
-                )
 
     def _render_disclaimers(self):
         """Render important disclaimers"""
@@ -353,27 +328,10 @@ class StreamlitApp:
             if len(st.session_state.messages) > MAX_HISTORY:
                 st.session_state.messages = st.session_state.messages[-MAX_HISTORY:]
 
-    def _save_feedback(self, message_index: int, feedback: str):
-        """Save feedback for a message"""
-        if message_index < len(st.session_state.messages):
-            st.session_state.messages[message_index]["feedback"] = feedback
-            logger.info(f"Feedback saved for message {message_index}: {feedback}")
-
     def run(self):
         """Main application entry point"""
-        st.title("🎓 AI Professor Platform")
-        st.markdown("*Chat with course-specific AI assistants trained on your professor's materials*")
-
         self.render_sidebar()
         self.render_main_chat()
-
-        # Footer
-        st.markdown("---")
-        st.markdown("""
-        <div style='text-align: center; color: gray;'>
-            <small>AI Professor Platform | Built with Streamlit, Pinecone, and Google AI</small>
-        </div>
-        """, unsafe_allow_html=True)
 
 
 # Application entry point
