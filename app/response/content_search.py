@@ -1,8 +1,6 @@
 import logging
 import re
 from typing import Dict, Optional, List
-from conversation_manager import ConversationContext
-from dual_content_handler import DualContentHandler, ContentNamespaces
 
 logger = logging.getLogger(__name__)
 
@@ -13,188 +11,19 @@ class ContentSearchEngine:
     def __init__(self, embedding_model, pinecone_index):
         self.embedding_model = embedding_model
         self.pinecone_index = pinecone_index
-        self.dual_handler = DualContentHandler(pinecone_index)
-
-    def search_course_content_dual(
-        self,
-        query: str,
-        course_namespace: str,
-        selected_lesson: str = "all",
-        conversation_context = None,
-        top_k: int = 8
-    ) -> Dict:
-        """Enhanced search using dual indexing strategy (mastery + lesson boundaries)"""
-        try:
-            # Get appropriate namespaces for this course and lesson selection
-            content_namespaces = self.dual_handler.get_content_namespaces(course_namespace, selected_lesson)
-            print(f"🔧 DEBUG: Content namespaces for '{course_namespace}': mastery='{content_namespaces.mastery}', lessons='{content_namespaces.lessons}'")
-            
-            # Generate query embedding
-            query_embedding = self.embedding_model.encode([query])[0].tolist()
-            print(f"🧮 DEBUG: Generated embedding of length {len(query_embedding)}")
-            
-            if selected_lesson == "all":
-                # All lessons selected - search across ALL lessons for comprehensive mastery knowledge
-                return self._search_all_lessons_for_mastery(query_embedding, content_namespaces, top_k)
-            else:
-                # Specific lesson selected - search both mastery and lesson content
-                return self._search_mastery_plus_lesson(query_embedding, content_namespaces, selected_lesson, top_k)
-        
-        except Exception as e:
-            logger.error(f"Error in dual content search: {e}")
-            return {"chunks": [], "total_found": 0, "search_strategy": "error"}
-    
-    def _search_mastery_only(self, query_embedding: List[float], content_namespaces: ContentNamespaces, top_k: int) -> Dict:
-        """Search mastery knowledge only (for 'all lessons' selection)"""
-        try:
-            print(f"🎯 DEBUG: Searching mastery namespace '{content_namespaces.mastery}' with top_k={top_k}")
-            results = self.pinecone_index.query(
-                vector=query_embedding,
-                top_k=top_k,
-                include_metadata=True,
-                namespace=content_namespaces.mastery,
-                filter={"content_type": "mastery"}
-            )
-            print(f"📊 DEBUG: Pinecone returned {len(results.matches)} matches")
-            
-            chunks = []
-            for match in results.matches:
-                print(f"   Match: score={match.score:.3f}, metadata keys={list(match.metadata.keys()) if match.metadata else 'None'}")
-                if match.score > 0.1:  # Very low threshold to see what content exists
-                    chunks.append({
-                        "text": match.metadata.get("text", ""),
-                        "score": match.score,
-                        "source": match.metadata.get("source", "mastery"),
-                        "content_type": "mastery",
-                        "lesson": None
-                    })
-            
-            return {
-                "chunks": chunks[:5],  # Top 5 for mastery-only
-                "total_found": len(chunks),
-                "search_strategy": "mastery_only"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in mastery-only search: {e}")
-            return {"chunks": [], "total_found": 0, "search_strategy": "mastery_error"}
-    
-    def _search_all_lessons_for_mastery(self, query_embedding: List[float], content_namespaces: ContentNamespaces, top_k: int) -> Dict:
-        """Search across ALL lessons to provide comprehensive mastery knowledge"""
-        try:
-            print(f"🎯 DEBUG: Searching ALL lessons in namespace '{content_namespaces.lessons}' for mastery knowledge")
-            
-            # Search the lessons namespace without lesson-specific filters
-            results = self.pinecone_index.query(
-                vector=query_embedding,
-                top_k=top_k * 2,  # Get more results since we're searching all lessons
-                include_metadata=True,
-                namespace=content_namespaces.lessons,
-                # No lesson filter - search across all lessons
-            )
-            print(f"📊 DEBUG: Pinecone returned {len(results.matches)} matches from all lessons")
-            
-            chunks = []
-            for match in results.matches:
-                text = match.metadata.get("text", "")
-                lesson_num = match.metadata.get('lesson_number', 'unknown')
-                print(f"   Match: score={match.score:.3f}, lesson={lesson_num}, preview: {text[:50]}...")
-                
-                if match.score > 0.1:  # Lower threshold for comprehensive search
-                    chunks.append({
-                        "text": text,
-                        "score": match.score,
-                        "source": match.metadata.get("source", "lessons"),
-                        "content_type": "comprehensive",
-                        "lesson": lesson_num,
-                        "weight": "mastery"
-                    })
-            
-            return {
-                "chunks": chunks[:top_k],  # Return top results
-                "total_found": len(chunks),
-                "search_strategy": "all_lessons_mastery"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in all-lessons mastery search: {e}")
-            return {"chunks": [], "total_found": 0, "search_strategy": "all_lessons_error"}
-    
-    def _search_mastery_plus_lesson(self, query_embedding: List[float], content_namespaces: ContentNamespaces, 
-                                   selected_lesson: str, top_k: int) -> Dict:
-        """Search both mastery knowledge and specific lesson content"""
-        try:
-            # Search mastery content (for teaching style and conceptual understanding)
-            mastery_results = self.pinecone_index.query(
-                vector=query_embedding,
-                top_k=top_k // 2,  # Half from mastery
-                include_metadata=True,
-                namespace=content_namespaces.mastery,
-                filter={"content_type": "mastery"}
-            )
-            
-            # Search lesson-specific content (for boundaries)
-            lesson_results = self.pinecone_index.query(
-                vector=query_embedding,
-                top_k=top_k // 2,  # Half from lesson
-                include_metadata=True,
-                namespace=content_namespaces.lessons,
-                filter=content_namespaces.lesson_filter
-            )
-            
-            # Process and combine results
-            mastery_chunks = []
-            for match in mastery_results.matches:
-                if match.score > 0.1:  # Very low threshold to see what content exists
-                    mastery_chunks.append({
-                        "text": match.metadata.get("text", ""),
-                        "score": match.score,
-                        "source": match.metadata.get("source", "mastery"),
-                        "content_type": "mastery",
-                        "lesson": None,
-                        "weight": "conceptual"  # Used for teaching style
-                    })
-            
-            lesson_chunks = []
-            for match in lesson_results.matches:
-                if match.score > 0.1:  # Higher threshold for quality lesson content
-                    lesson_chunks.append({
-                        "text": match.metadata.get("text", ""),
-                        "score": match.score,
-                        "source": match.metadata.get("source", f"lesson_{selected_lesson}"),
-                        "content_type": "lesson",
-                        "lesson": selected_lesson,
-                        "weight": "boundary"  # Used for scope boundaries
-                    })
-            
-            # Combine with lesson content weighted higher for relevance
-            all_chunks = lesson_chunks + mastery_chunks[:3]  # Prioritize lesson, add top mastery
-            
-            return {
-                "chunks": all_chunks[:5],  # Top 5 total
-                "total_found": len(mastery_chunks) + len(lesson_chunks),
-                "search_strategy": "mastery_plus_lesson",
-                "mastery_found": len(mastery_chunks),
-                "lesson_found": len(lesson_chunks)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in mastery+lesson search: {e}")
-            return {"chunks": [], "total_found": 0, "search_strategy": "hybrid_error"}
 
     def search_course_content(
         self,
         query: str,
         course_namespace: str,
-        conversation_context: ConversationContext,
         current_lesson: str = "all",
         top_k: int = 8,
         metadata_filter: Optional[dict] = None,
     ) -> Dict:
-        """Search for relevant content with lesson-aware filtering and enhanced academic structure preservation."""
+        """Search for relevant content with lesson-aware filtering"""
         try:
-            # Enhanced query with conversation context
-            context_enhanced_query = self._enhance_query_with_context(query, conversation_context)
+            # Enhanced query for better search relevance
+            context_enhanced_query = self._enhance_query_with_context(query)
 
             # Generate query embedding with context enhancement
             query_embedding = self.embedding_model.encode([context_enhanced_query])[0].tolist()
@@ -224,7 +53,7 @@ class ContentSearchEngine:
                 return {"context": "No relevant course material found for this query.", "chunks": []}
 
             # Process and rank results
-            processed_chunks = self._process_search_results(results, current_lesson, conversation_context)
+            processed_chunks = self._process_search_results(results, current_lesson)
 
             if not processed_chunks.get("selected_chunks"):
                 return {"context": "No sufficiently relevant course material found for this query.", "chunks": []}
@@ -242,8 +71,8 @@ class ContentSearchEngine:
             logger.error(f"Error searching course content: {e}")
             return {"context": f"Error retrieving course content: {str(e)}", "chunks": []}
 
-    def _enhance_query_with_context(self, query: str, conversation_context: ConversationContext) -> str:
-        """Enhance query with conversation context and definitional search terms for better search relevance"""
+    def _enhance_query_with_context(self, query: str) -> str:
+        """Enhance query with definitional search terms for better search relevance"""
         context_enhanced_query = query
 
         # For definitional questions, add search terms to find definitions and core explanations
@@ -256,19 +85,12 @@ class ContentSearchEngine:
             # Add terms that help find definitional content
             context_enhanced_query = f"{query} {concept} definition meaning explanation concept"
 
-        # Add previously discussed topics to enhance search relevance
-        if conversation_context.topics_discussed:
-            recent_topics = conversation_context.topics_discussed[-2:]
-            if recent_topics:
-                context_enhanced_query = f"{context_enhanced_query} {' '.join(recent_topics)}"
-
         return context_enhanced_query
 
     # NOTE: methods `_process_search_results` and `_format_context_for_response` should already exist
     # in your implementation. Ensure they handle the structures you pass here.
 
-    def _process_search_results(self, results, current_lesson: str,
-                              conversation_context: ConversationContext) -> Dict:
+    def _process_search_results(self, results, current_lesson: str) -> Dict:
         """Process and rank search results with lesson-aware filtering"""
         # Group chunks by lesson accessibility
         lesson_appropriate_chunks = []
@@ -301,11 +123,11 @@ class ContentSearchEngine:
 
         # Sort chunks by lesson and academic value
         lesson_appropriate_chunks.sort(
-            key=lambda chunk: self._calculate_chunk_score(chunk, current_lesson, conversation_context),
+            key=lambda chunk: self._calculate_chunk_score(chunk, current_lesson),
             reverse=True
         )
         general_chunks.sort(
-            key=lambda chunk: self._calculate_chunk_score(chunk, current_lesson, conversation_context),
+            key=lambda chunk: self._calculate_chunk_score(chunk, current_lesson),
             reverse=True
         )
 
@@ -343,9 +165,8 @@ class ContentSearchEngine:
             "chunk_type": match.metadata.get('chunk_type', 'general')
         }
 
-    def _calculate_chunk_score(self, chunk: Dict, current_lesson: str,
-                             conversation_context: ConversationContext) -> float:
-        """Calculate enhanced scoring for chunk ranking"""
+    def _calculate_chunk_score(self, chunk: Dict, current_lesson: str) -> float:
+        """Calculate scoring for chunk ranking based on lesson relevance"""
         score = chunk['score']
 
         # Lesson-based scoring
@@ -391,13 +212,6 @@ class ContentSearchEngine:
             score += 0.05
         if chunk['lesson']:
             score += 0.03
-
-        # Conversation continuity boost
-        chunk_topic = chunk.get('hierarchy_path', '').lower()
-        for discussed_topic in conversation_context.topics_discussed:
-            if discussed_topic.lower() in chunk_topic or chunk_topic in discussed_topic.lower():
-                score += 0.08
-                break
 
         return score
 
@@ -473,6 +287,38 @@ class ContentSearchEngine:
         sanitized = re.sub(r'--- SECTION ---', '\n\n--- SECTION ---\n', sanitized)
 
         return sanitized.strip()
+
+    def get_available_lessons(self, course_namespace: str) -> List[int]:
+        """Get available lessons from a course namespace by querying metadata"""
+        try:
+            # Query the namespace for lesson metadata
+            sample_results = self.pinecone_index.query(
+                vector=[0.0] * 768,  # Dummy vector for metadata query
+                top_k=100,
+                include_metadata=True,
+                namespace=course_namespace,
+                filter={"course": course_namespace}
+            )
+
+            # Extract unique lesson numbers
+            lessons = set()
+            for match in sample_results.matches:
+                lesson_num = match.metadata.get('lesson_number', '')
+                if lesson_num:
+                    try:
+                        # Handle both int and float lesson numbers
+                        if '.' in str(lesson_num):
+                            lessons.add(float(lesson_num))
+                        else:
+                            lessons.add(int(lesson_num))
+                    except (ValueError, TypeError):
+                        continue
+
+            return sorted(list(lessons))
+
+        except Exception as e:
+            logger.error(f"Error querying lessons from namespace {course_namespace}: {e}")
+            return []
 
     def get_alternative_content_from_embeddings(self, current_concept: str,
                                               current_chunks: List[Dict],

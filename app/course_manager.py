@@ -7,7 +7,6 @@ Handles course configuration, loading, and management for the AI Professor Platf
 import logging
 from typing import Dict, List, Optional
 from dataclasses import dataclass
-from dual_content_handler import DualContentHandler
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class CourseManager:
     def __init__(self):
         self._course_configs = self._load_course_definitions()
         self._available_courses = {}
-        self._dual_content_handler = None
+        self._content_search = None
         
     def _load_course_definitions(self) -> Dict[str, CourseConfig]:
         """Load predefined course configurations"""
@@ -152,25 +151,22 @@ class CourseManager:
     def load_available_courses_from_pinecone(self, pinecone_index) -> Dict[str, CourseConfig]:
         """Load courses that exist in Pinecone based on predefined course mapping"""
         try:
-            # Initialize dual content handler
-            self._dual_content_handler = DualContentHandler(pinecone_index)
-            
             # Get index stats to see available namespaces
             stats = pinecone_index.describe_index_stats()
+            existing_namespaces = stats.get('namespaces', {})
 
             # Only return courses that exist in Pinecone
             available_courses = {}
             for course_key, course_config in self._course_configs.items():
-                namespace_stats = self._dual_content_handler.get_namespace_stats(course_config.namespace)
-                
-                if namespace_stats["total_vectors"] > 0:
-                    # Course has content - add to available courses
-                    course_config.vector_count = namespace_stats["total_vectors"]
-                    available_courses[course_key] = course_config
-                    
-                    # Log which structure type
-                    structure_type = "dual" if self._dual_content_handler.has_dual_structure(course_config.namespace) else "legacy"
-                    logger.info(f"Found course: {course_config.name} ({course_config.vector_count} vectors, {structure_type} structure)")
+                # Check if namespace exists and has content
+                if course_config.namespace in existing_namespaces:
+                    vector_count = existing_namespaces[course_config.namespace].get('vector_count', 0)
+
+                    if vector_count > 0:
+                        # Course has content - add to available courses
+                        course_config.vector_count = vector_count
+                        available_courses[course_key] = course_config
+                        logger.info(f"Found course: {course_config.name} ({vector_count} vectors)")
 
             self._available_courses = available_courses
             return available_courses
@@ -191,19 +187,16 @@ class CourseManager:
         """Get course options for UI selection (key, name) tuples"""
         return [(key, config.name) for key, config in self._available_courses.items()]
     
-    def get_available_lessons_for_course(self, pinecone_index, course_key: str) -> List[int]:
-        """Get available lessons for a course using dual content handler"""
+    def get_available_lessons_for_course(self, content_search_engine, course_key: str) -> List[int]:
+        """Get available lessons for a course from the single namespace"""
         try:
             course_config = self.get_course(course_key)
             if not course_config:
                 return []
-            
-            # Use dual content handler to get lessons
-            if not self._dual_content_handler:
-                self._dual_content_handler = DualContentHandler(pinecone_index)
-            
-            lessons = self._dual_content_handler.get_available_lessons(course_config.namespace)
-            
+
+            # Use content search engine to get lessons directly from namespace
+            lessons = content_search_engine.get_available_lessons(course_config.namespace)
+
             # Convert to integers for UI compatibility (handle any floats like 3.5)
             int_lessons = []
             for lesson in lessons:
@@ -214,18 +207,10 @@ class CourseManager:
                 else:
                     # Handle decimal lessons like 3.5
                     int_lessons.append(lesson)
-            
+
             logger.info(f"Found lessons {int_lessons} for course {course_config.name}")
             return sorted(int_lessons)
-            
+
         except Exception as e:
             logger.error(f"Error getting available lessons: {e}")
             return []
-    
-    def get_content_namespaces(self, course_key: str, selected_lesson: str = "all"):
-        """Get content namespaces and filters for search - delegates to dual content handler"""
-        course_config = self.get_course(course_key)
-        if not course_config or not self._dual_content_handler:
-            return None
-        
-        return self._dual_content_handler.get_content_namespaces(course_config.namespace, selected_lesson)

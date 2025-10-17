@@ -14,11 +14,11 @@ import google.generativeai as genai
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
-# Import our OOP components
+# Import our simplified components
 from course_manager import CourseManager
-from conversation_manager import ConversationManager
-from pedagogical_engine import PedagogicalEngine
-from content_search import ContentSearchEngine
+from response.lesson_tracker import LessonTracker
+from response.pedagogical_engine import PedagogicalEngine
+from response.content_search import ContentSearchEngine
 from response_generator import ResponseGenerator
 
 # ----------------------------------
@@ -47,7 +47,7 @@ class StreamlitApp:
 
     def __init__(self):
         self.course_manager = None
-        self.conversation_manager = None
+        self.lesson_tracker = None
         self.pedagogical_engine = None
         self.content_search = None
         self.response_generator = None
@@ -114,7 +114,7 @@ class StreamlitApp:
 
         # Initialize core components
         self.course_manager = CourseManager()
-        self.conversation_manager = ConversationManager()
+        self.lesson_tracker = LessonTracker()
         self.pedagogical_engine = PedagogicalEngine()
 
         # Initialize content search engine
@@ -127,7 +127,7 @@ class StreamlitApp:
         self.response_generator = ResponseGenerator(
             content_search=self.content_search,
             pedagogical_engine=self.pedagogical_engine,
-            conversation_manager=self.conversation_manager,
+            lesson_tracker=self.lesson_tracker,
             genai_model=self.services["genai_model"],
         )
 
@@ -190,8 +190,8 @@ class StreamlitApp:
         st.session_state.selected_lesson = "all"
         st.session_state.messages = []
 
-        # Reset conversation context for new course
-        self.conversation_manager.reset_context()
+        # Reset lesson tracking for new course
+        self.lesson_tracker.reset()
         st.rerun()
 
     def _render_course_info(self, course_key: str):
@@ -205,11 +205,11 @@ class StreamlitApp:
         """Render lesson selection interface"""
         # Get available lessons for this course
         available_lessons = self.course_manager.get_available_lessons_for_course(
-            self.services["pinecone"], course_key
+            self.content_search, course_key
         )
 
-        # Update conversation context with available lessons
-        self.conversation_manager.set_available_lessons(available_lessons)
+        # Update lesson tracker with available lessons
+        self.lesson_tracker.set_available_lessons(available_lessons)
 
         st.markdown("---")
         st.markdown("### 📖 Current Lesson")
@@ -234,7 +234,7 @@ class StreamlitApp:
             # Handle lesson change
             if st.session_state.selected_lesson != selected_lesson:
                 st.session_state.selected_lesson = selected_lesson
-                self.conversation_manager.update_lesson_selection(selected_lesson)
+                self.lesson_tracker.update_lesson_selection(selected_lesson)
                 st.rerun()
         else:
             st.info("No lessons detected in course materials.")

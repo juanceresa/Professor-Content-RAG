@@ -526,15 +526,7 @@ class DocumentProcessor:
         # Get document type for enhanced processing
         doc_type = self.infer_document_type(file_path)
         
-        # Import improved chunking algorithm
-        import sys
-        from pathlib import Path
-        
-        # Add parent directory to path for improved_chunking import
-        parent_dir = Path(__file__).parent.parent
-        if str(parent_dir) not in sys.path:
-            sys.path.insert(0, str(parent_dir))
-        
+        # Import improved chunking algorithm from same directory
         from improved_chunking import create_improved_chunks
         
         # Extract lesson number if available
