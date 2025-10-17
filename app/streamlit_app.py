@@ -20,6 +20,7 @@ from response.lesson_tracker import LessonTracker
 from response.pedagogical_engine import PedagogicalEngine
 from response.content_search import ContentSearchEngine
 from response_generator import ResponseGenerator
+from survey import render_user_survey
 
 # ----------------------------------
 # Logging
@@ -181,6 +182,9 @@ class StreamlitApp:
             if selected_course_key:
                 self._render_lesson_selector(selected_course_key)
 
+            # Render user survey
+            render_user_survey()
+
             # Render important disclaimers
             self._render_disclaimers()
 
@@ -232,7 +236,6 @@ class StreamlitApp:
         else:
             st.info("No lessons detected in course materials.")
             st.session_state.selected_lesson = "all"
-
 
     def _render_disclaimers(self):
         """Render important disclaimers"""
