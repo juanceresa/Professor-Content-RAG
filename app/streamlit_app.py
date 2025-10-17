@@ -166,7 +166,8 @@ class StreamlitApp:
                 default_idx = 0
 
             selected_course_name = st.selectbox(
-                "Select your course:", course_names, index=default_idx
+                "Select your course:", course_names, index=default_idx,
+                help="Choose the course you are enrolled in to get tailored assistance.",
             )
 
             # Get selected course key
@@ -220,7 +221,7 @@ class StreamlitApp:
                 lesson_options,
                 format_func=lambda x: lesson_labels[lesson_options.index(x)],
                 index=current_index,
-                help="Choose your current lesson to get relevant content. Future lessons will be hidden.",
+                help="Choose your current lesson to get relevant content, or 'All Lessons' for general queries.",
             )
 
             # Handle lesson change
