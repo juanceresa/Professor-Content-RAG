@@ -116,11 +116,11 @@ class DualContentHandler:
         lessons_namespace = f"{course_namespace}-lessons"
         
         if selected_lesson == "all":
-            # All lessons - use mastery knowledge only
+            # All lessons - search across all lessons for comprehensive mastery knowledge  
             return ContentNamespaces(
                 mastery=mastery_namespace,
-                lessons=None,
-                lesson_filter=None
+                lessons=lessons_namespace,  # Now include lessons namespace for comprehensive search
+                lesson_filter=None  # No lesson filter - search all lessons
             )
         else:
             # Specific lesson - use mastery + lesson boundaries

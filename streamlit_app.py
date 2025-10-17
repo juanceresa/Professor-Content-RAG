@@ -98,7 +98,7 @@ class StreamlitApp:
             return {
                 "pinecone": index,
                 "embedding_model": embedding_model,
-                "genai_model": genai.GenerativeModel("gemini-1.5-flash"),
+                "genai_model": genai.GenerativeModel("gemini-2.0-flash-exp"),
             }
         except Exception as e:
             st.error(f"Failed to initialize services: {e}")
@@ -307,28 +307,6 @@ class StreamlitApp:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-                # Add feedback for assistant messages
-                if message["role"] == "assistant":
-                    self._render_feedback_buttons(message, i)
-
-    def _render_feedback_buttons(self, message: dict, message_index: int):
-        """Render feedback buttons for assistant messages"""
-        feedback = message.get("feedback", None)
-        col1, col2, col3 = st.columns([1, 1, 8])
-
-        with col1:
-            if st.button("👍", key=f"thumbs_up_{message_index}", disabled=feedback is not None):
-                self._save_feedback(message_index, "thumbs_up")
-                st.rerun()
-
-        with col2:
-            if st.button("👎", key=f"thumbs_down_{message_index}", disabled=feedback is not None):
-                self._save_feedback(message_index, "thumbs_down")
-                st.rerun()
-
-        if feedback:
-            st.caption(f"Feedback: {'👍 Helpful' if feedback == 'thumbs_up' else '👎 Not helpful'}")
-
     def _handle_chat_input(self, course_config):
         """Handle new chat input and generate response"""
         if prompt := st.chat_input(f"Ask about {course_config.name}..."):
@@ -369,7 +347,6 @@ class StreamlitApp:
 
                     # Display response + feedback
                     st.markdown(response)
-                    self._render_feedback_buttons(st.session_state.messages[-1], len(st.session_state.messages) - 1)
                     st.caption(f"Response time: {dt:.1f}s")
 
             # Cap history length
@@ -386,10 +363,10 @@ class StreamlitApp:
         """Main application entry point"""
         st.title("🎓 AI Professor Platform")
         st.markdown("*Chat with course-specific AI assistants trained on your professor's materials*")
-        
+
         self.render_sidebar()
         self.render_main_chat()
-        
+
         # Footer
         st.markdown("---")
         st.markdown("""

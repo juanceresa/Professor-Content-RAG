@@ -12,7 +12,7 @@ from typing import List
 class ImprovedChunker:
     """Improved chunking that preserves context and meaning"""
     
-    def __init__(self, min_chunk_size=400, target_size=800, max_size=1200):
+    def __init__(self, min_chunk_size=200, target_size=600, max_size=1000):
         self.min_chunk_size = min_chunk_size
         self.target_size = target_size
         self.max_size = max_size
@@ -74,18 +74,63 @@ class ImprovedChunker:
             if sections:
                 return sections
         
-        # If no lesson structure, split by major bullet points
-        major_bullet_pattern = r'\n\s*•\s+[A-Z][^•]*?(?=\n\s*•|\n\s*$)'
-        sections = re.split(major_bullet_pattern, text, flags=re.DOTALL)
+        # If no lesson structure, try to identify complete conceptual hierarchies
+        return self._extract_hierarchical_sections(text)
+    
+    def _extract_hierarchical_sections(self, text: str) -> List[str]:
+        """Extract sections that preserve complete hierarchical bullet structures"""
         
-        # Clean sections
-        clean_sections = []
-        for section in sections:
-            section = section.strip()
-            if section and len(section) > 50:
-                clean_sections.append(section)
+        # Split text into lines for analysis
+        lines = text.split('\n')
+        sections = []
+        current_section = []
+        current_hierarchy = []
         
-        return clean_sections if clean_sections else [text]
+        for line in lines:
+            stripped = line.strip()
+            
+            # Skip empty lines but track them for formatting
+            if not stripped:
+                if current_section:
+                    current_section.append(line)
+                continue
+            
+            # Detect bullet hierarchy level
+            indent_level = len(line) - len(line.lstrip())
+            
+            # Major bullet (•) - typically starts new concepts
+            if '•' in line:
+                # If we have accumulated content and this looks like a new major concept
+                if current_section and indent_level <= 12:  # Low indent = major concept
+                    section_text = '\n'.join(current_section).strip()
+                    if len(section_text) > 50:  # Only add meaningful sections
+                        sections.append(section_text)
+                    current_section = [line]
+                    current_hierarchy = [indent_level]
+                else:
+                    current_section.append(line)
+                    if indent_level not in current_hierarchy:
+                        current_hierarchy.append(indent_level)
+            
+            # Sub-bullets (o) or other content - continue building current section
+            else:
+                current_section.append(line)
+                if indent_level not in current_hierarchy:
+                    current_hierarchy.append(indent_level)
+        
+        # Add the final section
+        if current_section:
+            section_text = '\n'.join(current_section).strip()
+            if len(section_text) > 50:
+                sections.append(section_text)
+        
+        # If we didn't get good sections, fall back to paragraph splitting
+        if not sections or len(sections) == 1:
+            # Try splitting on double newlines (paragraphs)
+            paragraphs = text.split('\n\n')
+            sections = [p.strip() for p in paragraphs if p.strip() and len(p.strip()) > 50]
+        
+        return sections if sections else [text]
     
     def _split_lesson_content(self, lesson_content: str) -> List[str]:
         """Split content within a lesson while preserving structure"""

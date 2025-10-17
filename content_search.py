@@ -27,13 +27,15 @@ class ContentSearchEngine:
         try:
             # Get appropriate namespaces for this course and lesson selection
             content_namespaces = self.dual_handler.get_content_namespaces(course_namespace, selected_lesson)
+            print(f"🔧 DEBUG: Content namespaces for '{course_namespace}': mastery='{content_namespaces.mastery}', lessons='{content_namespaces.lessons}'")
             
             # Generate query embedding
             query_embedding = self.embedding_model.encode([query])[0].tolist()
+            print(f"🧮 DEBUG: Generated embedding of length {len(query_embedding)}")
             
             if selected_lesson == "all":
-                # All lessons selected - search mastery knowledge only
-                return self._search_mastery_only(query_embedding, content_namespaces, top_k)
+                # All lessons selected - search across ALL lessons for comprehensive mastery knowledge
+                return self._search_all_lessons_for_mastery(query_embedding, content_namespaces, top_k)
             else:
                 # Specific lesson selected - search both mastery and lesson content
                 return self._search_mastery_plus_lesson(query_embedding, content_namespaces, selected_lesson, top_k)
@@ -45,6 +47,7 @@ class ContentSearchEngine:
     def _search_mastery_only(self, query_embedding: List[float], content_namespaces: ContentNamespaces, top_k: int) -> Dict:
         """Search mastery knowledge only (for 'all lessons' selection)"""
         try:
+            print(f"🎯 DEBUG: Searching mastery namespace '{content_namespaces.mastery}' with top_k={top_k}")
             results = self.pinecone_index.query(
                 vector=query_embedding,
                 top_k=top_k,
@@ -52,10 +55,12 @@ class ContentSearchEngine:
                 namespace=content_namespaces.mastery,
                 filter={"content_type": "mastery"}
             )
+            print(f"📊 DEBUG: Pinecone returned {len(results.matches)} matches")
             
             chunks = []
             for match in results.matches:
-                if match.score > 0.3:  # Lowered threshold for mastery content
+                print(f"   Match: score={match.score:.3f}, metadata keys={list(match.metadata.keys()) if match.metadata else 'None'}")
+                if match.score > 0.1:  # Very low threshold to see what content exists
                     chunks.append({
                         "text": match.metadata.get("text", ""),
                         "score": match.score,
@@ -73,6 +78,47 @@ class ContentSearchEngine:
         except Exception as e:
             logger.error(f"Error in mastery-only search: {e}")
             return {"chunks": [], "total_found": 0, "search_strategy": "mastery_error"}
+    
+    def _search_all_lessons_for_mastery(self, query_embedding: List[float], content_namespaces: ContentNamespaces, top_k: int) -> Dict:
+        """Search across ALL lessons to provide comprehensive mastery knowledge"""
+        try:
+            print(f"🎯 DEBUG: Searching ALL lessons in namespace '{content_namespaces.lessons}' for mastery knowledge")
+            
+            # Search the lessons namespace without lesson-specific filters
+            results = self.pinecone_index.query(
+                vector=query_embedding,
+                top_k=top_k * 2,  # Get more results since we're searching all lessons
+                include_metadata=True,
+                namespace=content_namespaces.lessons,
+                # No lesson filter - search across all lessons
+            )
+            print(f"📊 DEBUG: Pinecone returned {len(results.matches)} matches from all lessons")
+            
+            chunks = []
+            for match in results.matches:
+                text = match.metadata.get("text", "")
+                lesson_num = match.metadata.get('lesson_number', 'unknown')
+                print(f"   Match: score={match.score:.3f}, lesson={lesson_num}, preview: {text[:50]}...")
+                
+                if match.score > 0.1:  # Lower threshold for comprehensive search
+                    chunks.append({
+                        "text": text,
+                        "score": match.score,
+                        "source": match.metadata.get("source", "lessons"),
+                        "content_type": "comprehensive",
+                        "lesson": lesson_num,
+                        "weight": "mastery"
+                    })
+            
+            return {
+                "chunks": chunks[:top_k],  # Return top results
+                "total_found": len(chunks),
+                "search_strategy": "all_lessons_mastery"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in all-lessons mastery search: {e}")
+            return {"chunks": [], "total_found": 0, "search_strategy": "all_lessons_error"}
     
     def _search_mastery_plus_lesson(self, query_embedding: List[float], content_namespaces: ContentNamespaces, 
                                    selected_lesson: str, top_k: int) -> Dict:
@@ -99,7 +145,7 @@ class ContentSearchEngine:
             # Process and combine results
             mastery_chunks = []
             for match in mastery_results.matches:
-                if match.score > 0.2:  # Lower threshold for mastery
+                if match.score > 0.1:  # Very low threshold to see what content exists
                     mastery_chunks.append({
                         "text": match.metadata.get("text", ""),
                         "score": match.score,
@@ -111,7 +157,7 @@ class ContentSearchEngine:
             
             lesson_chunks = []
             for match in lesson_results.matches:
-                if match.score > 0.2:  # Lower threshold for lessons
+                if match.score > 0.1:  # Higher threshold for quality lesson content
                     lesson_chunks.append({
                         "text": match.metadata.get("text", ""),
                         "score": match.score,
@@ -237,10 +283,10 @@ class ContentSearchEngine:
             chunk_info = self._extract_chunk_info(match)
 
             if not chunk_info["lesson"]:
-                if match.score > 0.45:
+                if match.score > 0.1:
                     general_chunks.append(chunk_info)
             elif accessible_lessons is None:
-                if match.score > 0.45:
+                if match.score > 0.1:
                     lesson_appropriate_chunks.append(chunk_info)
             else:
                 try:
@@ -250,7 +296,7 @@ class ContentSearchEngine:
                     else:
                         future_lesson_chunks.append(chunk_info)
                 except (ValueError, TypeError):
-                    if match.score > 0.45:
+                    if match.score > 0.1:
                         general_chunks.append(chunk_info)
 
         # Sort chunks by lesson and academic value

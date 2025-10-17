@@ -9,6 +9,7 @@ from datetime import datetime
 # Document processing
 from docx import Document
 import PyPDF2
+import pdfplumber
 from sentence_transformers import SentenceTransformer
 
 # Vector database
@@ -64,33 +65,28 @@ class DocumentProcessor:
     def extract_text_from_pdf(self, file_path: Path) -> str:
         """Extract text from PDF document preserving hierarchical structure"""
         try:
-            import fitz  # PyMuPDF for better formatting preservation
             text_blocks = []
+            
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages:
+                    # Extract text with layout preservation - key for hierarchical bullets
+                    page_text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+                    
+                    if page_text:
+                        # Split into lines and preserve indentation
+                        lines = page_text.split('\n')
+                        for line in lines:
+                            if line.strip():  # Skip empty lines
+                                text_blocks.append(line.rstrip())
+            
+            extracted_text = "\n".join(text_blocks)
+            logger.info(f"pdfplumber extracted {len(extracted_text)} characters from {file_path.name}")
+            return extracted_text
 
-            with fitz.open(file_path) as pdf_doc:
-                for page_num in range(len(pdf_doc)):
-                    page = pdf_doc[page_num]
-
-                    # Get text blocks with formatting information
-                    blocks = page.get_text("dict")
-
-                    for block in blocks["blocks"]:
-                        if "lines" in block:
-                            for line in block["lines"]:
-                                line_text = ""
-                                for span in line["spans"]:
-                                    # Preserve indentation by checking x-coordinate
-                                    x_coord = span["bbox"][0]
-                                    indent = " " * max(0, int((x_coord - 70) / 10))  # Approximate indentation
-                                    line_text += indent + span["text"]
-
-                                if line_text.strip():
-                                    text_blocks.append(line_text.rstrip())
-
-            return "\n".join(text_blocks)
-
-        except ImportError:
-            # Fallback to PyPDF2 if PyMuPDF not available
+        except Exception as e:
+            logger.error(f"Error extracting text with pdfplumber from {file_path}: {e}")
+            
+            # Fallback to PyPDF2 if pdfplumber fails
             try:
                 import PyPDF2
                 text = []
@@ -100,9 +96,10 @@ class DocumentProcessor:
                         page_text = page.extract_text()
                         if page_text.strip():
                             text.append(page_text.strip())
+                logger.info(f"PyPDF2 fallback extraction from {file_path.name}")
                 return "\n\n".join(text)
-            except Exception as e:
-                logger.error(f"Error extracting text from {file_path} with PyPDF2: {e}")
+            except Exception as e2:
+                logger.error(f"Error with PyPDF2 fallback for {file_path}: {e2}")
                 return ""
 
         except Exception as e:
@@ -531,7 +528,13 @@ class DocumentProcessor:
         
         # Import improved chunking algorithm
         import sys
-        sys.path.append('..')
+        from pathlib import Path
+        
+        # Add parent directory to path for improved_chunking import
+        parent_dir = Path(__file__).parent.parent
+        if str(parent_dir) not in sys.path:
+            sys.path.insert(0, str(parent_dir))
+        
         from improved_chunking import create_improved_chunks
         
         # Extract lesson number if available

@@ -31,7 +31,7 @@ class ComprehensiveReprocessor:
     
     def _initialize_services(self):
         """Initialize services from secrets.toml"""
-        secrets_path = Path("../.streamlit/secrets.toml")
+        secrets_path = Path(__file__).parent.parent / ".streamlit" / "secrets.toml"
         
         if secrets_path.exists():
             try:
@@ -39,16 +39,27 @@ class ComprehensiveReprocessor:
                 pinecone_api_key = secrets.get("PINECONE_API_KEY")
                 pinecone_index_name = secrets.get("PINECONE_INDEX_NAME", "ai-professor-platform")
                 logger.info("Loaded configuration from .streamlit/secrets.toml")
+                logger.info(f"API key length: {len(pinecone_api_key) if pinecone_api_key else 'None'}")
+                logger.info(f"Index name: {pinecone_index_name}")
             except Exception as e:
                 logger.error(f"Error reading secrets.toml: {e}")
                 return
         else:
-            logger.error("secrets.toml not found")
+            logger.error(f"secrets.toml not found at: {secrets_path.absolute()}")
+            return
+        
+        if not pinecone_api_key:
+            logger.error("PINECONE_API_KEY not found in secrets.toml")
             return
         
         # Initialize Pinecone
-        pc = Pinecone(api_key=pinecone_api_key)
-        self.pinecone_index = pc.Index(pinecone_index_name)
+        try:
+            pc = Pinecone(api_key=pinecone_api_key)
+            self.pinecone_index = pc.Index(pinecone_index_name)
+            logger.info("Pinecone connection established successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Pinecone: {e}")
+            return
         
         # Initialize dual processor
         self.dual_processor = DualEmbedProcessor(
@@ -152,7 +163,7 @@ class ComprehensiveReprocessor:
         logger.info("RE-PROCESSING ALL COURSES WITH IMPROVED CHUNKING")
         logger.info("=" * 60)
         
-        data_directory = Path("../documents")
+        data_directory = Path(__file__).parent.parent / "documents"
         
         if not data_directory.exists():
             logger.error(f"Documents directory not found: {data_directory}")
