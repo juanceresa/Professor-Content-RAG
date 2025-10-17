@@ -61,7 +61,6 @@ class ResponseGenerator:
             search_results = self.content_search.search_course_content(
                 query=prompt,
                 course_namespace=course_config.namespace,
-                conversation_context=None,  # Simplified - no complex context tracking
                 current_lesson=current_lesson,
             )
 

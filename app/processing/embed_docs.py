@@ -66,45 +66,26 @@ class DocumentProcessor:
         """Extract text from PDF document preserving hierarchical structure"""
         try:
             text_blocks = []
-            
+
             with pdfplumber.open(file_path) as pdf:
                 for page in pdf.pages:
                     # Extract text with layout preservation - key for hierarchical bullets
                     page_text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
-                    
+
                     if page_text:
                         # Split into lines and preserve indentation
                         lines = page_text.split('\n')
                         for line in lines:
                             if line.strip():  # Skip empty lines
                                 text_blocks.append(line.rstrip())
-            
+
             extracted_text = "\n".join(text_blocks)
             logger.info(f"pdfplumber extracted {len(extracted_text)} characters from {file_path.name}")
             return extracted_text
 
         except Exception as e:
             logger.error(f"Error extracting text with pdfplumber from {file_path}: {e}")
-            
-            # Fallback to PyPDF2 if pdfplumber fails
-            try:
-                import PyPDF2
-                text = []
-                with open(file_path, 'rb') as file:
-                    pdf_reader = PyPDF2.PdfReader(file)
-                    for page in pdf_reader.pages:
-                        page_text = page.extract_text()
-                        if page_text.strip():
-                            text.append(page_text.strip())
-                logger.info(f"PyPDF2 fallback extraction from {file_path.name}")
-                return "\n\n".join(text)
-            except Exception as e2:
-                logger.error(f"Error with PyPDF2 fallback for {file_path}: {e2}")
-                return ""
 
-        except Exception as e:
-            logger.error(f"Error extracting text from {file_path}: {e}")
-            return ""
 
     def extract_text_from_txt(self, file_path: Path) -> str:
         """Extract text from plain text file"""
@@ -133,12 +114,12 @@ class DocumentProcessor:
         """Extract lessons with 100% confidence in MASTER files"""
         import re
         lessons = {}
-        
+
         if doc_type == "master_lecture":
             lines = text.split('\n')
             for i, line in enumerate(lines):
                 stripped = line.strip()
-                
+
                 # Lesson headers: "Lesson X" with no bullet point
                 lesson_match = re.match(r'^Lesson\s+(\d+)(?:\s|$)', stripped, re.IGNORECASE)
                 if lesson_match and not any(stripped.startswith(bullet) for bullet in ['•', '○', '■', '▪', '-', '*']):
@@ -150,7 +131,7 @@ class DocumentProcessor:
                         'raw_line': line
                     }
                     logger.info(f"Found lesson {lesson_number}: {stripped}")
-        
+
         return lessons
 
     def extract_hierarchical_structure(self, text: str, doc_type: str = "general") -> List[Dict]:
@@ -185,7 +166,7 @@ class DocumentProcessor:
                     current_lesson = stripped_line
                     hierarchy_stack = [current_lesson]
                     is_lesson_header = True
-                    
+
                     # Add lesson header as a structured item
                     structured_content.append({
                         'content': stripped_line,
@@ -273,7 +254,7 @@ class DocumentProcessor:
         chunks = []
         current_lesson_content = []
         current_lesson = None
-        
+
         for item in content:
             # Hard boundary at lesson changes
             if item.get('lesson') != current_lesson and current_lesson_content:
@@ -281,15 +262,15 @@ class DocumentProcessor:
                 lesson_chunks = self._chunk_within_lesson(current_lesson_content, target_size)
                 chunks.extend(lesson_chunks)
                 current_lesson_content = []
-            
+
             current_lesson = item.get('lesson')
             current_lesson_content.append(item)
-        
+
         # Process final lesson
         if current_lesson_content:
             lesson_chunks = self._chunk_within_lesson(current_lesson_content, target_size)
             chunks.extend(lesson_chunks)
-        
+
         return chunks
 
     def _chunk_within_lesson(self, lesson_content: List[Dict], target_size: int = 900) -> List[str]:
@@ -297,65 +278,65 @@ class DocumentProcessor:
         chunks = []
         current_chunk_items = []
         current_size = 0
-        
+
         i = 0
         while i < len(lesson_content):
             item = lesson_content[i]
-            
+
             # Get the complete bullet tree starting from this item
             bullet_tree = self._extract_complete_bullet_tree(lesson_content, i)
             tree_size = sum(len(item['full_line']) for item in bullet_tree)
-            
+
             # If adding this tree exceeds size AND we have content, create chunk
             if current_size + tree_size > target_size and current_chunk_items:
                 chunk = self._assemble_chunk_with_context(current_chunk_items)
                 chunks.append(chunk)
                 current_chunk_items = []
                 current_size = 0
-            
+
             # Add the complete bullet tree
             current_chunk_items.extend(bullet_tree)
             current_size += tree_size
-            
+
             # Skip ahead past the tree items we just processed
             i += len(bullet_tree)
-        
+
         # Final chunk
         if current_chunk_items:
             chunk = self._assemble_chunk_with_context(current_chunk_items)
             chunks.append(chunk)
-        
+
         return chunks
 
     def _extract_complete_bullet_tree(self, content: List[Dict], start_idx: int) -> List[Dict]:
         """Extract a complete bullet tree to avoid breaking conceptual flow"""
         if start_idx >= len(content):
             return []
-        
+
         tree = [content[start_idx]]
         start_item = content[start_idx]
         start_level = start_item.get('level', 0)
-        
+
         # If this is a lesson header, just return it
         if start_item.get('is_lesson_header'):
             return tree
-        
+
         # If this is a main bullet (•), include all its sub-bullets
         if start_level == 1:  # Main bullet
             i = start_idx + 1
             while i < len(content):
                 item = content[i]
                 item_level = item.get('level', 0)
-                
+
                 # Stop when we hit another main bullet, lesson header, or lesson boundary
-                if ((item_level <= 1 and i > start_idx) or 
+                if ((item_level <= 1 and i > start_idx) or
                     item.get('is_lesson_header') or
                     item.get('lesson') != start_item.get('lesson')):
                     break
-                
+
                 tree.append(item)
                 i += 1
-        
+
         return tree
 
     def _create_topic_based_chunks(self, content: List[Dict], target_size: int = 900) -> List[str]:
@@ -364,53 +345,53 @@ class DocumentProcessor:
         chunks = []
         current_chunk_items = []
         current_size = 0
-        
+
         i = 0
         while i < len(content):
             item = content[i]
-            
+
             # Get bullet tree for main bullets, single item for others
             if item.get('level') == 1:  # Main bullet
                 bullet_tree = self._extract_complete_bullet_tree(content, i)
             else:
                 bullet_tree = [item]
-            
+
             tree_size = sum(len(item['full_line']) for item in bullet_tree)
-            
+
             # Check size constraints
             if current_size + tree_size > target_size and current_chunk_items:
                 chunk = self._assemble_chunk_with_context(current_chunk_items)
                 chunks.append(chunk)
                 current_chunk_items = []
                 current_size = 0
-            
+
             current_chunk_items.extend(bullet_tree)
             current_size += tree_size
             i += len(bullet_tree)
-        
+
         # Final chunk
         if current_chunk_items:
             chunk = self._assemble_chunk_with_context(current_chunk_items)
             chunks.append(chunk)
-        
+
         return chunks
 
     def _assemble_chunk_with_context(self, items: List[Dict]) -> str:
         """Assemble chunk with proper hierarchical context and lesson information"""
         if not items:
             return ""
-        
+
         chunk_lines = []
-        
+
         # Add lesson header if present
         lesson = items[0].get('lesson')
         if lesson and not items[0].get('is_lesson_header'):
             chunk_lines.append(f"=== {lesson} ===\n")
-        
+
         # Add items preserving original formatting and indentation
         for item in items:
             chunk_lines.append(item['full_line'])
-        
+
         return '\n'.join(chunk_lines)
 
     def _create_chunk_with_context(self, items: List[Dict]) -> str:
@@ -481,23 +462,23 @@ class DocumentProcessor:
     def infer_document_type(self, file_path: Path) -> str:
         """Enhanced document classification with lesson detection priority"""
         filename = file_path.name
-        
+
         # MASTER lecture PDFs - highest priority for lesson extraction
-        if (filename.startswith("MASTER") and 
-            "Lecture" in filename and 
+        if (filename.startswith("MASTER") and
+            "Lecture" in filename and
             filename.endswith(".pdf")):
             return "master_lecture"
-        
+
         # MASTER reading PDFs - reading materials in PDF format
-        elif (filename.startswith("MASTER") and 
-              "Read" in filename and 
+        elif (filename.startswith("MASTER") and
+              "Read" in filename and
               filename.endswith(".pdf")):
             return "reading_material"
-        
+
         # Reading materials - support content without lesson structure
         elif file_path.suffix.lower() in ['.docx', '.doc']:
             return "reading_material"
-        
+
         # Legacy classification for other files
         filename_lower = filename.lower()
         if 'syllabus' in filename_lower:
@@ -525,10 +506,10 @@ class DocumentProcessor:
 
         # Get document type for enhanced processing
         doc_type = self.infer_document_type(file_path)
-        
+
         # Import improved chunking algorithm from same directory
         from improved_chunking import create_improved_chunks
-        
+
         # Extract lesson number if available
         lesson_number = None
         if 'lesson' in file_path.name.lower():
@@ -536,10 +517,10 @@ class DocumentProcessor:
             match = re.search(r'lesson(\d+(?:\.\d+)?)', file_path.name.lower())
             if match:
                 lesson_number = match.group(1)
-        
+
         # Create chunks using improved algorithm
         chunks = create_improved_chunks(
-            text=text, 
+            text=text,
             lesson_number=lesson_number,
             min_size=300,     # Smaller minimum for academic content
             target_size=700,  # Good balance for retrieval

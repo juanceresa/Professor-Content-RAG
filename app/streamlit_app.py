@@ -178,7 +178,6 @@ class StreamlitApp:
 
             # Render course information and lesson selector
             if selected_course_key:
-                self._render_course_info(selected_course_key)
                 self._render_lesson_selector(selected_course_key)
 
             # Render important disclaimers
@@ -193,13 +192,6 @@ class StreamlitApp:
         # Reset lesson tracking for new course
         self.lesson_tracker.reset()
         st.rerun()
-
-    def _render_course_info(self, course_key: str):
-        """Render course information"""
-        course_config = self.course_manager.get_course(course_key)
-        if course_config:
-            st.markdown(f"**{course_config.name}**")
-            st.markdown(f"*{course_config.description}*")
 
     def _render_lesson_selector(self, course_key: str):
         """Render lesson selection interface"""
@@ -322,7 +314,6 @@ class StreamlitApp:
 
                     # Display response + feedback
                     st.markdown(response)
-                    st.caption(f"Response time: {dt:.1f}s")
 
             # Cap history length
             if len(st.session_state.messages) > MAX_HISTORY:

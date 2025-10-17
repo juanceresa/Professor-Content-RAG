@@ -1,8 +1,8 @@
 """
 Clean and Re-process All Course Content
 
-Comprehensive script to clean all corrupted namespaces and re-process with 
-improved chunking and metadata. Handles both dual-structure and legacy courses.
+Comprehensive script to clean all namespaces and re-process with
+improved chunking and metadata. Uses single namespace per course.
 """
 
 import toml
@@ -15,7 +15,7 @@ from typing import List, Set
 sys.path.append('..')
 
 from pinecone import Pinecone
-from dual_embed_processor import DualEmbedProcessor
+from embed_docs import process_course_content
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,51 +23,45 @@ logger = logging.getLogger(__name__)
 
 class ComprehensiveReprocessor:
     """Handles complete cleanup and reprocessing of all course content"""
-    
+
     def __init__(self):
         self.pinecone_index = None
-        self.dual_processor = None
+        self.pinecone_api_key = None
+        self.pinecone_index_name = None
         self._initialize_services()
-    
+
     def _initialize_services(self):
         """Initialize services from secrets.toml"""
         secrets_path = Path(__file__).parent.parent / ".streamlit" / "secrets.toml"
-        
+
         if secrets_path.exists():
             try:
                 secrets = toml.load(secrets_path)
-                pinecone_api_key = secrets.get("PINECONE_API_KEY")
-                pinecone_index_name = secrets.get("PINECONE_INDEX_NAME", "ai-professor-platform")
+                self.pinecone_api_key = secrets.get("PINECONE_API_KEY")
+                self.pinecone_index_name = secrets.get("PINECONE_INDEX_NAME", "ai-professor-platform")
                 logger.info("Loaded configuration from .streamlit/secrets.toml")
-                logger.info(f"API key length: {len(pinecone_api_key) if pinecone_api_key else 'None'}")
-                logger.info(f"Index name: {pinecone_index_name}")
+                logger.info(f"API key length: {len(self.pinecone_api_key) if self.pinecone_api_key else 'None'}")
+                logger.info(f"Index name: {self.pinecone_index_name}")
             except Exception as e:
                 logger.error(f"Error reading secrets.toml: {e}")
                 return
         else:
             logger.error(f"secrets.toml not found at: {secrets_path.absolute()}")
             return
-        
-        if not pinecone_api_key:
+
+        if not self.pinecone_api_key:
             logger.error("PINECONE_API_KEY not found in secrets.toml")
             return
-        
+
         # Initialize Pinecone
         try:
-            pc = Pinecone(api_key=pinecone_api_key)
-            self.pinecone_index = pc.Index(pinecone_index_name)
+            pc = Pinecone(api_key=self.pinecone_api_key)
+            self.pinecone_index = pc.Index(self.pinecone_index_name)
             logger.info("Pinecone connection established successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Pinecone: {e}")
             return
-        
-        # Initialize dual processor
-        self.dual_processor = DualEmbedProcessor(
-            pinecone_api_key=pinecone_api_key,
-            pinecone_index_name=pinecone_index_name,
-            professor_name="Professor Robert Ceresa"
-        )
-        
+
         logger.info("Services initialized successfully")
     
     def get_all_course_namespaces(self) -> Set[str]:
@@ -75,26 +69,26 @@ class ComprehensiveReprocessor:
         try:
             stats = self.pinecone_index.describe_index_stats()
             existing_namespaces = set(stats.get('namespaces', {}).keys())
-            
+
             # Filter for course namespaces (exclude system namespaces)
             course_namespaces = set()
             course_patterns = [
-                'foundational', 'functional', 'govt', 'professional',  # Dual structure
-                'american', 'international', 'theory',  # Legacy structure
-                'federal_state_local'  # Legacy combined
+                'foundational', 'functional', 'professional',  # Single namespace courses
+                'american', 'international', 'theory',  # Single namespace courses
+                'federal_state_local', 'govt', 'local'  # Government courses (old and new)
             ]
-            
+
             for namespace in existing_namespaces:
-                # Check for exact matches and suffixed versions
+                # Check for exact matches and dual namespace patterns (old structure)
                 for pattern in course_patterns:
-                    if (namespace == pattern or 
-                        namespace.startswith(f"{pattern}-") or
-                        pattern in namespace):
+                    if (namespace == pattern or
+                        namespace.startswith(f"{pattern}-lessons") or
+                        namespace.startswith(f"{pattern}-mastery")):
                         course_namespaces.add(namespace)
                         break
-            
+
             return course_namespaces
-            
+
         except Exception as e:
             logger.error(f"Error getting namespaces: {e}")
             return set()
@@ -162,37 +156,43 @@ class ComprehensiveReprocessor:
         logger.info("=" * 60)
         logger.info("RE-PROCESSING ALL COURSES WITH IMPROVED CHUNKING")
         logger.info("=" * 60)
-        
-        data_directory = Path(__file__).parent.parent / "documents"
-        
+
+        data_directory = Path(__file__).parent.parent.parent / "documents"
+
         if not data_directory.exists():
             logger.error(f"Documents directory not found: {data_directory}")
             return {}
-        
-        # Process all courses
-        results = self.dual_processor.process_all_courses(data_directory)
-        
-        # Report results
-        logger.info("=" * 60)
-        logger.info("RE-PROCESSING SUMMARY")
-        logger.info("=" * 60)
-        
-        successful = []
-        failed = []
-        
-        for course_name, success in results.items():
-            if success:
-                successful.append(course_name)
-                logger.info(f"✅ {course_name}: Successfully processed")
-            else:
-                failed.append(course_name)
-                logger.error(f"❌ {course_name}: Processing failed")
-        
-        logger.info(f"\\nTotal: {len(results)} courses")
-        logger.info(f"✅ Successful: {len(successful)}")
-        logger.info(f"❌ Failed: {len(failed)}")
-        
-        return results
+
+        # Process all courses using the simplified embed_docs function
+        try:
+            process_course_content(
+                data_directory=data_directory,
+                pinecone_api_key=self.pinecone_api_key,
+                pinecone_index_name=self.pinecone_index_name,
+                professor_name="Professor Robert Ceresa"
+            )
+
+            # Get updated stats to see what was created
+            stats = self.pinecone_index.describe_index_stats()
+            namespaces = stats.get('namespaces', {})
+
+            logger.info("=" * 60)
+            logger.info("RE-PROCESSING SUMMARY")
+            logger.info("=" * 60)
+
+            results = {}
+            for namespace, info in namespaces.items():
+                vector_count = info.get('vector_count', 0)
+                if vector_count > 0:
+                    logger.info(f"✅ {namespace}: {vector_count} vectors")
+                    results[namespace] = True
+
+            logger.info(f"\nTotal: {len(results)} courses processed")
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Error processing courses: {e}")
+            return {}
     
     def run_complete_cleanup_and_reprocessing(self):
         """Run the complete cleanup and reprocessing workflow"""
