@@ -7,7 +7,6 @@ response timing, and small caching/structure tweaks.
 """
 
 import os
-import time
 import logging
 import streamlit as st
 import google.generativeai as genai
@@ -266,62 +265,56 @@ class StreamlitApp:
         # Display chat header
         st.markdown(f"### 💬 Chat with Professor Ceresa - {course_config.name}")
 
-        # Display chat history
+        # Display chat history (only past messages, not the ones being added this run)
         self._render_chat_history()
 
-        # Handle new chat input
+        # Handle new chat input (this will render new messages)
         self._handle_chat_input(course_config)
 
     def _render_chat_history(self):
-        """Render existing chat messages with feedback buttons"""
-        for i, message in enumerate(st.session_state.messages):
+        """Render all chat messages from history"""
+        for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
     def _handle_chat_input(self, course_config):
         """Handle new chat input and generate response"""
         if prompt := st.chat_input(f"Ask about {course_config.name}..."):
-            # Show user message
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            # Save user message
+            # Add user message to history
             st.session_state.messages.append({"role": "user", "content": prompt})
 
-            # Generate and display assistant response
-            with st.chat_message("assistant"):
-                with st.spinner("Searching course materials and generating response..."):
-                    t0 = time.time()
-                    try:
-                        # Try new signature (selected_lesson)
-                        response = self.response_generator.generate_response(
-                            prompt=prompt,
-                            course_config=course_config,
-                            messages=st.session_state.messages,
-                            selected_lesson=st.session_state.get("selected_lesson", "all"),
-                        )
-                    except TypeError:
-                        # Fallback for older ResponseGenerator
-                        response = self.response_generator.generate_response(
-                            prompt=prompt,
-                            course_config=course_config,
-                            messages=st.session_state.messages,
-                        )
-                    except Exception as e:
-                        logging.exception("Response generation failed")
-                        response = f"Sorry, I hit an error generating a response: {e}"
+            # Generate assistant response (with spinner in the status area)
+            with st.status("Generating response...", expanded=False) as status:
+                try:
+                    # Try new signature (selected_lesson)
+                    response = self.response_generator.generate_response(
+                        prompt=prompt,
+                        course_config=course_config,
+                        messages=st.session_state.messages,
+                        selected_lesson=st.session_state.get("selected_lesson", "all"),
+                    )
+                except TypeError:
+                    # Fallback for older ResponseGenerator
+                    response = self.response_generator.generate_response(
+                        prompt=prompt,
+                        course_config=course_config,
+                        messages=st.session_state.messages,
+                    )
+                except Exception as e:
+                    logging.exception("Response generation failed")
+                    response = f"Sorry, I hit an error generating a response: {e}"
 
-                    dt = time.time() - t0
+                status.update(label="Response complete!", state="complete")
 
-                    # Append assistant message BEFORE rendering feedback buttons
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-
-                    # Display response + feedback
-                    st.markdown(response)
+            # Add assistant message to history
+            st.session_state.messages.append({"role": "assistant", "content": response})
 
             # Cap history length
             if len(st.session_state.messages) > MAX_HISTORY:
                 st.session_state.messages = st.session_state.messages[-MAX_HISTORY:]
+
+            # Force rerun to display the new messages
+            st.rerun()
 
     def run(self):
         """Main application entry point"""
