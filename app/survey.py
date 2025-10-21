@@ -5,10 +5,8 @@ Handles user feedback collection and storage for the AI Professor Platform.
 Saves survey results to Google Sheets for easy access and analysis.
 """
 
-import csv
 import logging
 import streamlit as st
-from pathlib import Path
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
@@ -61,13 +59,13 @@ def render_user_survey():
 
 
 def _get_google_sheets_client():
-    """Initialize Google Sheets client using service account credentials"""
+    """Initialize Google Sheets client using service account credentials from Streamlit secrets"""
     try:
         # Get credentials from Streamlit secrets
-        credentials_dict = st.secrets.get("gcp_service_account", None)
+        credentials_dict = st.secrets.get("gcp_service_account")
 
         if not credentials_dict:
-            logger.error("No Google service account credentials found in secrets")
+            logger.warning("No Google service account credentials found in secrets")
             return None
 
         # Define the scopes
@@ -84,6 +82,7 @@ def _get_google_sheets_client():
 
         # Authorize and return the client
         client = gspread.authorize(credentials)
+        logger.info("Successfully initialized Google Sheets client")
         return client
 
     except Exception as e:
@@ -108,61 +107,31 @@ def save_survey_results(speed_up: int, recommend: str):
         "messages_count": len(st.session_state.get("messages", []))
     }
 
-    # Try Google Sheets first
     try:
         client = _get_google_sheets_client()
 
-        if client:
-            # Get the spreadsheet (create if doesn't exist)
-            spreadsheet_name = "AI Professor Survey Results"
+        if not client:
+            logger.error("Google Sheets client not initialized")
+            return False
 
-            try:
-                spreadsheet = client.open(spreadsheet_name)
-            except gspread.SpreadsheetNotFound:
-                # Create new spreadsheet if it doesn't exist
-                spreadsheet = client.create(spreadsheet_name)
-                # Share with your email for access
-                # spreadsheet.share('your-email@example.com', perm_type='user', role='writer')
-                logger.info(f"Created new spreadsheet: {spreadsheet_name}")
+        # Open the existing shared spreadsheet
+        spreadsheet_name = "AI Professor Survey Results"
+        spreadsheet = client.open(spreadsheet_name)
+        worksheet = spreadsheet.sheet1
 
-            # Get the first worksheet (or create it)
-            try:
-                worksheet = spreadsheet.sheet1
-            except Exception:
-                worksheet = spreadsheet.add_worksheet(title="Survey Responses", rows=1000, cols=10)
+        # Check if headers exist, if not add them
+        existing_headers = worksheet.row_values(1) if worksheet.row_count > 0 else []
+        if not existing_headers:
+            headers = list(feedback_data.keys())
+            worksheet.append_row(headers)
+            logger.info("Added headers to Google Sheet")
 
-            # Check if headers exist, if not add them
-            if worksheet.row_count == 0 or not worksheet.row_values(1):
-                headers = list(feedback_data.keys())
-                worksheet.append_row(headers)
-                logger.info("Added headers to Google Sheet")
-
-            # Append the data
-            row_data = list(feedback_data.values())
-            worksheet.append_row(row_data)
-            logger.info(f"Survey feedback saved to Google Sheets: {feedback_data}")
-            return True
-
-    except Exception as e:
-        logger.error(f"Failed to save to Google Sheets: {e}")
-        logger.info("Falling back to local CSV storage")
-
-    # Fallback to CSV if Google Sheets fails
-    try:
-        results_dir = Path(__file__).parent / "survey_results"
-        results_dir.mkdir(exist_ok=True)
-
-        csv_file = results_dir / "user_feedback.csv"
-        file_exists = csv_file.exists()
-
-        with open(csv_file, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=feedback_data.keys())
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(feedback_data)
-        logger.info(f"Survey feedback saved to CSV (fallback): {feedback_data}")
+        # Append the data
+        row_data = list(feedback_data.values())
+        worksheet.append_row(row_data)
+        logger.info("Survey feedback saved to Google Sheets successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to save survey results to both Google Sheets and CSV: {e}")
+        logger.error(f"Failed to save survey results to Google Sheets: {e}")
         return False

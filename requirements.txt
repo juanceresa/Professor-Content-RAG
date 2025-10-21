@@ -20,5 +20,7 @@ pandas>=2.0.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Google Sheets integration for survey results
 gspread>=6.0.0
 google-auth>=2.23.0
