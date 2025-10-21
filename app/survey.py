@@ -22,8 +22,8 @@ def render_user_survey():
     # Initialize survey responses in session state if not present
     if "survey_speed_up" not in st.session_state:
         st.session_state.survey_speed_up = 50
-    if "survey_recommend" not in st.session_state:
-        st.session_state.survey_recommend = "Yes"
+    if "survey_comments" not in st.session_state:
+        st.session_state.survey_comments = ""
     if "survey_submitted" not in st.session_state:
         st.session_state.survey_submitted = False
 
@@ -38,18 +38,18 @@ def render_user_survey():
     )
     st.session_state.survey_speed_up = speed_up
 
-    # Selectbox: Would you recommend
-    recommend = st.selectbox(
-        "Would you recommend this tool to other students?",
-        options=["Yes", "No"],
-        index=0 if st.session_state.survey_recommend == "Yes" else 1,
-        help="Let us know if you'd recommend this to your classmates"
+    # Text area: Comments and suggestions
+    comments = st.text_area(
+        "Please add any comments / suggestions for improvements, or share your thoughts",
+        value=st.session_state.get("survey_comments", ""),
+        placeholder="Your feedback helps this tool improve...",
+        help="Share your experience, suggestions, or any issues you encountered"
     )
-    st.session_state.survey_recommend = recommend
+    st.session_state.survey_comments = comments
 
     # Submit button
     if st.button("Submit Feedback", type="primary", use_container_width=True):
-        save_survey_results(speed_up, recommend)
+        save_survey_results(speed_up, comments)
         st.session_state.survey_submitted = True
         st.success("Thank you for your feedback!")
 
@@ -90,12 +90,12 @@ def _get_google_sheets_client():
         return None
 
 
-def save_survey_results(speed_up: int, recommend: str):
+def save_survey_results(speed_up: int, comments: str):
     """Save survey results to Google Sheets
 
     Args:
         speed_up: Percentage improvement in study efficiency (0-100)
-        recommend: Whether user would recommend the tool ("Yes" or "No")
+        comments: User comments, suggestions, and thoughts
     """
     # Prepare feedback data
     feedback_data = {
@@ -103,7 +103,7 @@ def save_survey_results(speed_up: int, recommend: str):
         "course": st.session_state.get("selected_course", "unknown"),
         "lesson": st.session_state.get("selected_lesson", "unknown"),
         "speed_up_percentage": speed_up,
-        "would_recommend": recommend,
+        "comments": comments,
         "messages_count": len(st.session_state.get("messages", []))
     }
 
